@@ -1,0 +1,183 @@
+database: cyberrssbot.db
+
+discord:
+  guild_id: 0
+  channels:
+    default: 0
+    kev: 0
+    vulns: 0
+    advisories: 0
+    news: 0
+    research: 0
+    dfir: 0
+    breaches: 0
+    ransomware: 0
+    malware: 0
+    finance: 0
+    log: 0
+  kev_ping_role_id: 0
+  post_gap_seconds: 1.5
+
+poll:
+  default_interval: 1200
+  max_age_days: 7
+  first_run_lookback_hours: 0
+
+network:
+  timeout: 45
+  user_agent: "Mozilla/5.0 (compatible; CyberRSSBot/1.0; +security news aggregator)"
+  host_min_interval_default: 2.0
+  host_min_interval:
+    services.nvd.nist.gov: 6.5
+    api.github.com: 2.0
+    api.first.org: 2.0
+    data.sec.gov: 0.25
+    finnhub.io: 1.1
+
+dedup:
+  story_window_hours: 72
+  title_threshold: 0.5
+  cve_title_threshold: 0.25
+  fold_cve_news: false
+
+filters:
+  vulns:
+    min_cvss: 8.0
+    min_epss: 0.10
+    watch_min_cvss: 6.5
+    max_age_days: 30
+    watchlist: [microsoft, windows, exchange, sharepoint, azure, microsoft edge, cisco, fortinet, fortios,
+                fortigate, fortiweb, ivanti, citrix, netscaler, palo alto, pan-os, globalprotect,
+                vmware, esxi, vcenter, f5, big-ip, sonicwall, juniper, check point, atlassian,
+                confluence, jira, gitlab, jenkins, openssh, openssl, chrome, chromium, firefox,
+                apple, ios, macos, android, veeam, zyxel, sap, oracle, kubernetes, docker, okta]
+    mute_cnas: [vuldb, wordfence, patchstack, wpscan]
+    mute_patterns: ["plugin for wordpress", "wordpress plugin", "theme for wordpress",
+                    "sourcecodester", "phpgurukul", "code-projects", "itsourcecode", "campcodes"]
+
+finance:
+  sec_contact_name: CyberRSSBot
+  move_alert_pct: 7
+  summary_delay_minutes: 20
+  cluster_window_hours: 48
+  filings: {form4: false, schedule_13g: false}
+  earnings: {weekly_weekday: 0, weekly_hour_utc: 13, same_day_reminder: true, reminder_hour_et: 8,
+             refresh_hours: 12, horizon_days: 90}
+  companies:
+    CRWD: {name: CrowdStrike, cik: 1535527}
+    PANW: {name: Palo Alto Networks, cik: 1327567}
+    FTNT: {name: Fortinet, cik: 1262039}
+    ZS:   {name: Zscaler, cik: 1713683}
+    S:    {name: SentinelOne, cik: 1583708}
+    OKTA: {name: Okta, cik: 1660134}
+    NET:  {name: Cloudflare, cik: 1477333}
+    CHKP: {name: Check Point Software, cik: 1015922, aliases: [Check Point]}
+    QLYS: {name: Qualys, cik: 1107843}
+    TENB: {name: Tenable, cik: 1660280}
+    RPD:  {name: Rapid7, cik: 1560327}
+    VRNS: {name: Varonis, cik: 1361113}
+    RBRK: {name: Rubrik, cik: 1943896}
+    SAIL: {name: SailPoint, cik: 2030781}
+    GEN:  {name: Gen Digital, cik: 849399}
+    AKAM: {name: Akamai, cik: 1086222}
+    FFIV: {name: F5, cik: 1048695, aliases: [F5 Networks]}
+  benchmarks:
+    CIBR: First Trust NASDAQ Cybersecurity ETF
+    HACK: Amplify Cybersecurity ETF
+    BUG: Global X Cybersecurity ETF
+
+sources:
+  - {id: cisa-kev, type: kev,  name: CISA KEV,      channel: kev,   interval: 1800}
+  - {id: nvd,      type: nvd,  name: NVD,           channel: vulns, interval: 900, first_run_lookback_hours: 6}
+  - {id: ghsa,     type: ghsa, name: GitHub Advisory, channel: vulns, interval: 1800}
+  - {id: epss,     type: epss, name: FIRST EPSS,    interval: 21600, track_days: 14}
+  - id: msrc
+    name: MSRC
+    type: rss
+    kind: vuln
+    vendor: microsoft
+    url: https://api.msrc.microsoft.com/update-guide/rss
+    interval: 1800
+
+  - {id: cisa-advisories, name: CISA, channel: advisories, interval: 1800, enabled: false,
+     url: "https://www.cisa.gov/cybersecurity-advisories/all.xml"}
+  - {id: cert-eu, name: CERT-EU, channel: advisories, interval: 3600,
+     url: "https://cert.europa.eu/publications/security-advisories-rss"}
+  - {id: ncsc-uk, name: NCSC UK, channel: advisories, interval: 3600,
+     url: "https://www.ncsc.gov.uk/api/1/services/v1/all-rss-feed.xml"}
+  - {id: cccs, name: Canadian Centre for Cyber Security, channel: advisories, interval: 3600,
+     url: "https://www.cyber.gc.ca/api/cccs/rss/v1/get?feed=alerts_advisories&lang=en"}
+
+  - {id: cisco-psirt, name: Cisco PSIRT, channel: advisories, interval: 3600,
+     url: "https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml"}
+  - {id: fortinet-psirt, name: Fortinet PSIRT, channel: advisories, interval: 3600,
+     url: "https://filestore.fortinet.com/fortiguard/rss/ir.xml"}
+  - {id: paloalto-psirt, name: Palo Alto Networks, channel: advisories, interval: 3600,
+     url: "https://security.paloaltonetworks.com/rss.xml"}
+
+  - {id: bleepingcomputer, name: BleepingComputer, url: "https://www.bleepingcomputer.com/feed/"}
+  - {id: thehackernews,    name: The Hacker News,  url: "https://feeds.feedburner.com/TheHackersNews"}
+  - {id: therecord,        name: The Record,       url: "https://therecord.media/feed"}
+  - {id: securityweek,     name: SecurityWeek,     url: "https://www.securityweek.com/feed/"}
+  - {id: krebs,            name: Krebs on Security, url: "https://krebsonsecurity.com/feed/", interval: 3600}
+  - {id: darkreading,      name: Dark Reading,     url: "https://www.darkreading.com/rss.xml",
+     exclude_keywords: ["[virtual event]", "[webinar]"]}
+  - {id: cyberscoop,       name: CyberScoop,       url: "https://cyberscoop.com/feed/"}
+  - {id: ars-security,     name: Ars Technica,     url: "https://arstechnica.com/security/feed/"}
+  - {id: theregister-sec,  name: The Register,     url: "https://www.theregister.com/security/headlines.atom"}
+  - {id: schneier,         name: Schneier on Security, url: "https://www.schneier.com/feed/atom/", interval: 3600}
+
+  - {id: talos,      name: Cisco Talos,     channel: research, interval: 3600, url: "https://blog.talosintelligence.com/rss/"}
+  - {id: eset,       name: ESET Research,   channel: research, interval: 3600, url: "https://www.welivesecurity.com/en/rss/feed/"}
+  - {id: unit42,     name: Unit 42,         channel: research, interval: 3600, url: "https://unit42.paloaltonetworks.com/feed/"}
+  - {id: msft-sec,   name: Microsoft Security, channel: research, interval: 3600, url: "https://www.microsoft.com/en-us/security/blog/feed/"}
+  - {id: gtig,       name: Google Threat Intelligence, channel: research, interval: 3600,
+     url: "https://cloudblog.withgoogle.com/topics/threat-intelligence/rss/"}
+  - {id: securelist, name: Kaspersky Securelist, channel: research, interval: 3600, url: "https://securelist.com/feed/"}
+  - {id: checkpoint, name: Check Point Research, channel: research, interval: 3600, url: "https://research.checkpoint.com/feed/"}
+  - {id: sophos,     name: Sophos X-Ops,    channel: research, interval: 3600,
+     url: "https://news.sophos.com/en-us/category/threat-research/feed/"}
+  - {id: dfir-report, name: The DFIR Report, channel: dfir, interval: 7200, url: "https://thedfirreport.com/feed/"}
+  - {id: watchtowr,  name: watchTowr Labs,  channel: research, interval: 7200, url: "https://labs.watchtowr.com/rss/"}
+  - {id: sans-isc,   name: SANS ISC,        channel: dfir, interval: 3600, url: "https://isc.sans.edu/rssfeed_full.xml"}
+  - {id: exploit-db, name: Exploit-DB,      channel: research, interval: 3600, url: "https://www.exploit-db.com/rss.xml"}
+
+  - {id: databreaches, name: DataBreaches.net, channel: breaches, url: "https://databreaches.net/feed/"}
+  - {id: hibp,         name: Have I Been Pwned, channel: breaches, interval: 3600,
+     url: "https://feeds.feedburner.com/HaveIBeenPwnedLatestBreaches"}
+
+  - {id: ransomware-live, name: ransomware.live, channel: ransomware, interval: 1800, cluster: false,
+     url: "https://www.ransomware.live/rss.xml"}
+
+  - {id: anyrun,          name: ANY.RUN,          channel: malware, interval: 3600, url: "https://any.run/cybersecurity-blog/feed/"}
+  - {id: malware-traffic, name: Malware Traffic Analysis, channel: malware, interval: 7200,
+     url: "https://www.malware-traffic-analysis.net/blog-entries.rss"}
+  - {id: malpedia,        name: Malpedia,         channel: malware, interval: 7200,
+     url: "https://malpedia.caad.fkie.fraunhofer.de/feeds/rss/latest"}
+  - {id: malwarebytes,    name: Malwarebytes Labs, channel: malware, interval: 3600,
+     url: "https://www.malwarebytes.com/blog/feed/index.xml"}
+
+  - {id: sec-edgar,    type: sec_edgar,    name: SEC EDGAR,         channel: finance, interval: 600, idle_interval: 3600}
+  - {id: fin-quotes,   type: quotes,       name: Finnhub quotes,    channel: finance, interval: 900}
+  - {id: fin-earnings, type: earnings,     name: Finnhub earnings,  channel: finance, interval: 1800}
+  - {id: fin-news,     type: company_news, name: Finnhub news,      channel: finance, interval: 3600, enabled: false}
+  - {id: ir-cloudflare, name: Cloudflare IR, channel: finance, tickers: [NET], interval: 3600,
+     url: "https://cloudflare.net/rss/pressrelease.aspx"}
+  - {id: ir-gen, name: Gen Digital IR, channel: finance, tickers: [GEN], interval: 3600,
+     url: "https://investor.gendigital.com/rss/pressrelease.aspx"}
+  - {id: gnw-rapid7, name: GlobeNewswire, channel: finance, tickers: [RPD], interval: 3600,
+     url: "https://www.globenewswire.com/RssFeed/keyword/Rapid7",
+     exclude_keywords: &lawfirms ["law firm", "law llp", "class action", "shareholder alert", "investor alert",
+                                  "securities fraud", "lawsuit", "encourages investors", "investors who",
+                                  "rosen law", "pomerantz", "levi & korsinsky", "bragar", "faruqi",
+                                  "kessler topaz", "hagens berman", "kuehn law", "robbins geller"]}
+  - {id: gnw-akamai, name: GlobeNewswire, channel: finance, tickers: [AKAM], interval: 3600,
+     url: "https://www.globenewswire.com/RssFeed/keyword/Akamai", exclude_keywords: *lawfirms}
+  - {id: gnw-tenable, name: GlobeNewswire, channel: finance, tickers: [TENB], interval: 3600,
+     url: "https://www.globenewswire.com/RssFeed/keyword/Tenable", exclude_keywords: *lawfirms}
+  - {id: gnw-rubrik, name: GlobeNewswire, channel: finance, tickers: [RBRK], interval: 3600,
+     url: "https://www.globenewswire.com/RssFeed/keyword/Rubrik", exclude_keywords: *lawfirms}
+  - {id: gnw-qualys, name: GlobeNewswire, channel: finance, tickers: [QLYS], interval: 3600,
+     url: "https://www.globenewswire.com/RssFeed/keyword/Qualys", exclude_keywords: *lawfirms}
+  - {id: bw-mna, name: Business Wire, channel: finance, tickers: watchlist, interval: 1800, max_items: 100,
+     url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFtRWA==", exclude_keywords: *lawfirms}
