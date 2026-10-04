@@ -128,6 +128,8 @@ Each digest covers one window, for example the last 6 hours, and shows the windo
 
 An item is a cleaned headline linking to the source, one sentence quoted from the source's own feed summary with the extracted names and figures in bold, the outlet it came from, and links to other outlets that covered the same story. At most one sentence of about 40 words is quoted per source, always attributed and linked. Items are referenced, not reposted: the original post stays in its own channel.
 
+Several CVEs for the same product are folded into one item, such as *ZITADEL: 5 authentication flaws, CVSS up to 9.8, fixed in 3.4.15 / 4.17.3*, with every CVE linked. Ransomware leak-site posts read as *Qilin claims Unident Group*.
+
 Structured data gets short generated paragraphs: additions to CISA KEV, Windows update statistics from the Microsoft tracker, and the biggest movers on the stock watchlist.
 
 Every digest ends with a **Coverage & limitations** section built from the run itself: how many sources were checked and which failed and why, how many raw items became how many clustered stories, and how many were dated outside the window. Stories that fit no section but score above the window's median appear under **Other notable**; the rest are counted. Sections with nothing to show are listed there as "no qualifying items from checked sources" rather than implying that nothing happened. Long digests are split across messages at section boundaries, never in the middle of an item. A run summary goes to the log channel.

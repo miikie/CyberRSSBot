@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import time
 
 import aiosqlite
+
+from .util import parse_claim
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -44,8 +50,24 @@ CREATE INDEX IF NOT EXISTS idx_ms_kbs_dirty ON ms_kbs(dirty);
 CREATE INDEX IF NOT EXISTS idx_ms_kbs_doc ON ms_kbs(doc);
 CREATE TABLE IF NOT EXISTS ms_kb_cves (cve TEXT, kb TEXT, PRIMARY KEY(cve, kb));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, description TEXT, applied INTEGER);
 CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
+
+async def _m1_claims(db) -> None:
+    async with db.execute("SELECT id, data FROM stories") as cur:
+        rows = await cur.fetchall()
+    for row in rows:
+        data = json.loads(row["data"])
+        claim = parse_claim(data.get("title"))
+        if claim and data.get("claim") != claim:
+            data["claim"] = claim
+            await db.execute("UPDATE stories SET data=? WHERE id=?", (json.dumps(data), row["id"]))
+
+
+MIGRATIONS = [
+    (1, "ransomware.live claims: store group and victim on existing stories", _m1_claims),
+]
 
 SOURCE_FIELDS = {"last_ok", "last_err", "last_err_ts", "fails", "seeded", "items", "cursor"}
 
@@ -57,10 +79,45 @@ class Store:
         self._read_lock = asyncio.Lock()
 
     async def open(self) -> None:
+        existed = self.path != ":memory:" and os.path.exists(self.path) and os.path.getsize(self.path) > 0
         self.db = await aiosqlite.connect(self.path)
         self.db.row_factory = aiosqlite.Row
         await self.db.executescript(SCHEMA)
         await self.db.commit()
+        await self.migrate(existed)
+
+    async def schema_version(self) -> int:
+        row = await self._one("SELECT MAX(version) AS v FROM schema_version")
+        return int(row["v"] or 0)
+
+    async def migrate(self, existed: bool = True) -> list[int]:
+        current = await self.schema_version()
+        pending = [m for m in MIGRATIONS if m[0] > current]
+        if not pending:
+            return []
+        if existed:
+            self.backup_path = await self.backup()
+            log.info("database backed up to %s before migration %s", self.backup_path,
+                     ", ".join(str(m[0]) for m in pending))
+        for version, description, step in pending:
+            await step(self.db)
+            await self.db.execute("INSERT INTO schema_version(version, description, applied) VALUES (?,?,?)",
+                                  (version, description, int(time.time())))
+            await self.db.commit()
+            log.info("applied database migration %d: %s", version, description)
+        return [m[0] for m in pending]
+
+    async def backup(self) -> str:
+        folder = os.path.join(os.path.dirname(os.path.abspath(self.path)), "backups")
+        os.makedirs(folder, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(self.path))[0]
+        target = os.path.join(folder, f"{stem}-{time.strftime('%Y%m%d-%H%M%S')}.db")
+        suffix = 1
+        while os.path.exists(target):
+            target = os.path.join(folder, f"{stem}-{time.strftime('%Y%m%d-%H%M%S')}-{suffix}.db")
+            suffix += 1
+        await self.db.execute("VACUUM INTO ?", (target,))
+        return target
 
     async def close(self) -> None:
         if self.db:

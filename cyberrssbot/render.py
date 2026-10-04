@@ -5,7 +5,7 @@ from datetime import date
 import discord
 
 from . import msrc
-from .util import parse_time, primary_id, truncate
+from .util import claim_title, clean_title, parse_time, primary_id, truncate
 
 SEVERITY_COLOR = {"CRITICAL": 0xB71C1C, "HIGH": 0xE65100, "MEDIUM": 0xF9A825, "LOW": 0x1565C0}
 CHANNEL_COLOR = {"news": 0x5865F2, "research": 0x8E44AD, "advisories": 0x16A085}
@@ -110,8 +110,9 @@ def story_embed(d: dict) -> discord.Embed:
     summary = d.get("summary") or ""
     if summary.lower().startswith(d["title"].lower()[:60]):
         summary = ""
+    title = claim_title(d["claim"]) if d.get("claim") else clean_title(d["title"]) or d["title"]
     embed = discord.Embed(
-        title=truncate(d["title"], 256),
+        title=truncate(title, 256),
         url=d["url"],
         description=truncate(summary, 350),
         color=CHANNEL_COLOR.get(d.get("channel"), 0x5865F2),
@@ -319,6 +320,17 @@ def routes_embed(rows: list[dict], days: int) -> discord.Embed:
     return embed
 
 
+def entity_aliases(entity) -> list[str]:
+    seen = {entity.name.casefold(), str(entity.id).casefold()}
+    out = []
+    for alias in entity.aliases:
+        key = alias.strip().casefold()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(alias.strip())
+    return out
+
+
 def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Embed:
     first = entities[0]
     embed = discord.Embed(title=truncate(first.name, 256), url=first.meta.get("url"), color=DIGEST_COLOR)
@@ -329,8 +341,9 @@ def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Emb
             lines.append(f"Vendor: {entity.meta['vendor']}")
         if entity.meta.get("jurisdiction"):
             lines.append(f"Jurisdiction: {entity.meta['jurisdiction']}")
-        if entity.aliases:
-            lines.append("Also known as: " + _join_limit(entity.aliases, ", ", 800))
+        aliases = entity_aliases(entity)
+        if aliases:
+            lines.append("Also known as: " + _join_limit(aliases, ", ", 800))
         embed.add_field(name=truncate(f"{entity.name} ({entity.type})", 256), value="\n".join(lines), inline=False)
     lines = [f"• [{truncate(m['title'], 90)}]({m['url']}) — {m['source']}" if m.get("url")
              else f"• {truncate(m['title'], 90)} — {m['source']}" for m in mentions]

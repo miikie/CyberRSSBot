@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from . import render
 from .dedup import StoryIndex, fingerprint
 from .msrc import kb_url
-from .util import parse_time
+from .util import parse_claim, parse_time
 
 log = logging.getLogger(__name__)
 
@@ -242,6 +242,9 @@ class StoryEngine:
             "summary": item.get("summary", ""), "published": item.get("published"),
             "cves": sorted(cves), "also": [], "channel": channel_key,
         }
+        claim = parse_claim(item["title"])
+        if claim:
+            data["claim"] = claim
         sid = await store.story_insert(now, tokens, cves, data)
         if cluster:
             self.index.add(sid, now, tokens, cves)

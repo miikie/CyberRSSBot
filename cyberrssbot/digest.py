@@ -14,7 +14,7 @@ from . import msrc, render
 from .classify import score
 from .dedup import CVE_RE
 from .extract import extract
-from .util import parse_time, primary_id
+from .util import clean_title, parse_claim, parse_time, primary_id
 
 DEFAULT_SECTIONS = [
     {"key": "exploited", "title": "Exploited in the wild", "labels": ["exploited"]},
@@ -61,6 +61,29 @@ _DOMAIN_RE = re.compile(r"^[\w-]+(\.[\w-]+)*\.(com|net|org|io|co|uk|news|media)$
 _ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _CLAUSE_RE = re.compile(r"[,;:(]|\.\s|\s[-–—]\s")
 _LEAD_SYMBOL_RE = re.compile(r"^[^\w\"'“‘(\[$€£#@]+")
+_VERSIONISH_RE = re.compile(r"^v?\d+(\.[\dx*]+)*[a-z]?$|^\d+\.x$", re.IGNORECASE)
+_BEFORE_RE = re.compile(r"\b(?:before|prior to)\s+(?:version\s+)?v?(\d+(?:\.\d+)+)", re.IGNORECASE)
+_THROUGH_RE = re.compile(r"\bthrough\s+(?:version\s+)?v?(\d+(?:\.\d+)+)", re.IGNORECASE)
+GROUP_IDS_SHOWN = 8
+PRODUCT_STOPWORDS = frozenset("""
+    a an the this that these there it its in on at for with by of to from when while due because during after
+    before if some certain multiple several all any use using improper incorrect insufficient missing unrestricted
+    uncontrolled unchecked insecure cross-site cross-origin sql os buffer heap stack out-of-bounds null integer
+    deserialization authentication authorization an attacker attackers remote local successful exploitation
+    vulnerability vulnerabilities issue issues flaw flaws bug versions version affected
+""".split())
+CVE_THEMES = (
+    ("authentication", ("authenticat", "authoriz", "access control", "privilege", "spoofing", "credential")),
+    ("CSRF", ("cross-site request forgery",)),
+    ("injection", ("injection", "cross-site scripting", "template")),
+    ("memory-safety", ("buffer", "out-of-bounds", "use after free", "overflow", "null pointer", "double free",
+                       "uninitialized", "type confusion")),
+    ("path traversal", ("path traversal", "link following")),
+    ("SSRF", ("server-side request forgery",)),
+    ("information-disclosure", ("exposure of sensitive", "information exposure", "sensitive information")),
+    ("denial-of-service", ("resource consumption", "infinite loop", "recursion", "allocation of resources")),
+    ("deserialization", ("deserialization",)),
+)
 _DATED_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MD_RE = re.compile(r"([\\*_`~|])")
 
@@ -196,6 +219,91 @@ def first_clause(text: str, max_words: int = 12) -> str:
     return " ".join(words[:max_words]) + "…" if len(words) > max_words else clause
 
 
+def leading_product(description: str) -> str:
+    words = _WS_RE.sub(" ", description or "").strip().split(" ")
+    if words and words[0] == "In":
+        words = words[1:]
+    if not words or not words[0] or words[0].casefold() in PRODUCT_STOPWORDS or not words[0][0].isalnum():
+        return ""
+    name = [words[0]]
+    for word in words[1:4]:
+        bare = word.rstrip(",:;")
+        if not bare or not bare[0].isupper() or _VERSIONISH_RE.match(bare) or bare.casefold() in PRODUCT_STOPWORDS:
+            break
+        name.append(bare)
+        if bare != word:
+            break
+    product = " ".join(name).rstrip(",:;.")
+    return "" if _VERSIONISH_RE.match(product) else product
+
+
+def fixed_versions(descriptions: list[str]) -> tuple[list[str], list[str]]:
+    before: dict[str, tuple] = {}
+    through: dict[str, tuple] = {}
+    for text in descriptions:
+        for found, bucket in ((_BEFORE_RE.findall(text or ""), before), (_THROUGH_RE.findall(text or ""), through)):
+            for version in found:
+                key = tuple(int(p) for p in version.split("."))
+                major = version.split(".")[0]
+                if major not in bucket or key > bucket[major]:
+                    bucket[major] = key
+    def show(bucket):
+        return [".".join(str(p) for p in v) for _, v in sorted(bucket.items(), key=lambda kv: kv[1])]
+    return show(before), show(through)
+
+
+def cve_theme(cwe_names: list[str]) -> str | None:
+    text = " ".join(cwe_names).lower()
+    for theme, words in CVE_THEMES:
+        if any(w in text for w in words):
+            return theme
+    return None
+
+
+def group_vulns(items: list[dict], bonus: float) -> list[dict]:
+    groups: dict[tuple, list[dict]] = {}
+    for item in items:
+        if item["kind"] == "vuln" and item.get("product"):
+            groups.setdefault((item["product"].casefold(), tuple(item["labels"])), []).append(item)
+    out, done = [], set()
+    for item in items:
+        key = (item.get("product") or "").casefold(), tuple(item["labels"])
+        members = groups.get(key) if item["kind"] == "vuln" else None
+        if not members or len(members) < 2:
+            out.append(item)
+            continue
+        if key in done:
+            continue
+        done.add(key)
+        members = sorted(members, key=lambda m: (-(m["cvss"] or 0), m["pid"]))
+        top = members[0]
+        themes = {m["theme"] for m in members}
+        theme = next(iter(themes)) if len(themes) == 1 and None not in themes else None
+        parts = [f"{len(members)} {theme} flaws" if theme else f"{len(members)} vulnerabilities"]
+        scores = [m["cvss"] for m in members if m["cvss"] is not None]
+        if scores:
+            parts.append(f"CVSS up to {max(scores):.1f}")
+        before, through = fixed_versions([m["summary"] for m in members])
+        if before:
+            parts.append("fixed in " + " / ".join(before))
+        elif through:
+            parts.append("affects up to " + " / ".join(through))
+        also, seen_urls = [], set()
+        for m in members:
+            for other in m["also"]:
+                if other["url"] not in seen_urls:
+                    seen_urls.add(other["url"])
+                    also.append(other)
+        out.append({
+            "kind": "vuln_group", "sort": f"g{key[0]}", "labels": top["labels"],
+            "title": f"{top['product']}: {', '.join(parts)}", "url": top["url"], "source": top["source"],
+            "summary": top["summary"], "tags": ["KEV"] if "KEV" in {t for m in members for t in m["tags"]} else [],
+            "also": also, "members": [{"pid": m["pid"], "url": m["url"]} for m in members],
+            "score": round(max(m["score"] for m in members) + bonus * (len(members) - 1), 3),
+        })
+    return out
+
+
 def emphasize(text: str, kb) -> str:
     out, pos = [], 0
     for start, end in extract(text, kb).spans:
@@ -297,6 +405,7 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
         ex, labels = intel.analyze(d["title"], d.get("summary") or "", source=d["source"])
         text = f"{d['title']} {d.get('summary') or ''}"
         items.append({
+            "claim": d.get("claim") or parse_claim(d["title"]),
             "kind": "story", "sort": f"s{row['id']:012d}", "labels": labels, "title": d["title"], "url": d["url"],
             "source": d["source"], "summary": d.get("summary") or "", "also": d.get("also") or [], "tags": [],
             "score": score(ex, weights=intel.weights, outlets=len(d.get("also") or []), watched=intel.watched(text),
@@ -331,7 +440,10 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
             tags.append("KEV")
         news = d.get("news") or []
         when = parse_time(d.get("published")) or datetime.fromtimestamp(row["first_seen"], timezone.utc)
+        cwe_names = [kb.cwe[c.upper()] for c in d.get("cwe") or [] if c.upper() in kb.cwe]
+        product = affected(d) or leading_product(d.get("description") or "")
         items.append({
+            "pid": pid, "cvss": d.get("cvss"), "product": product, "theme": cve_theme(cwe_names),
             "kind": "vuln", "sort": f"v{pid}", "labels": labels, "title": f"{pid} — {label}" if label else pid,
             "url": refs.get("NVD") or next(iter(refs.values()), None), "source": outlet,
             "summary": d.get("description") or "", "tags": tags,
@@ -359,17 +471,27 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
                            primary=d.get("kind") == "filing", age_hours=age(when)),
         })
 
+    if cfg.get("group_cves", True):
+        items = group_vulns(items, float(cfg.get("cve_group_bonus", 0.5)))
     outlets = intel.outlets
 
     def render_item(item: dict) -> str:
         headline = clean_headline(item["title"], outlets, kb)
-        head = f"▸ **{link(md(headline), item['url'])}**"
+        if item.get("claim"):
+            group, victim = md(item["claim"]["group"]), md(item["claim"]["victim"])
+            head = "▸ " + link(f"**{group}** claims **{victim}**", item["url"])
+        else:
+            head = f"▸ **{link(md(headline), item['url'])}**"
         if item["tags"]:
             head += " · " + " · ".join(item["tags"])
         sentence = None if item["kind"] == "story" and item["source"] in intel.no_quote \
             else best_sentence(item["summary"], headline, kb, max_words)
         lines = [head, f"“{emphasize(sentence, kb)}” (per {md(item['source'])})"] if sentence \
             else [f"{head} (per {md(item['source'])})"]
+        if item.get("members"):
+            shown = [link(m["pid"], m["url"]) for m in item["members"][:GROUP_IDS_SHOWN]]
+            more = len(item["members"]) - len(shown)
+            lines.append(f"{len(item['members'])} CVEs: " + ", ".join(shown) + (f" and {more} more" if more else ""))
         seen, also = {item["source"]}, []
         for other in item["also"]:
             if other["source"] not in seen:

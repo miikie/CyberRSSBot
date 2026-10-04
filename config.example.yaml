@@ -216,6 +216,10 @@ digest:
     - {key: law-enforcement, title: Law enforcement,           labels: [law-enforcement]}
     - {key: policy,          title: Policy & law,              labels: [policy-law]}
     - {key: markets,         title: Markets,                   labels: [finance]}
+  # Several CVEs for the same product in one edition become one item ("ZITADEL: 5 authentication flaws, CVSS
+  # up to 9.8, fixed in 3.4.15 / 4.17.3"). The group scores as its best CVE plus this bonus per extra CVE.
+  group_cves: true
+  cve_group_bonus: 0.5
   # Stories that match no section. Shown under this title only when they score above the median
   # score of the window's classified items; the rest are counted in the coverage section.
   other: {enabled: true, title: Other notable, top_n: 3}

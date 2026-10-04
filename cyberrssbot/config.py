@@ -44,7 +44,7 @@ DEFAULTS = {
     "digest": {
         "enabled": False, "channel": "digest", "top_n": 5, "max_words": 40, "min_score": 0,
         "late_grace_hours": 6, "max_message_chars": 3800, "post_empty": True, "catch_up_minutes": 90,
-        "entity_lookback_days": 14, "weights": {},
+        "entity_lookback_days": 14, "weights": {}, "group_cves": True, "cve_group_bonus": 0.5,
         "other": {"enabled": True, "title": "Other notable", "top_n": 3},
     },
     "sources": [],
