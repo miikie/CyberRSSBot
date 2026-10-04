@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS ms_kbs (
 CREATE INDEX IF NOT EXISTS idx_ms_kbs_dirty ON ms_kbs(dirty);
 CREATE INDEX IF NOT EXISTS idx_ms_kbs_doc ON ms_kbs(doc);
 CREATE TABLE IF NOT EXISTS ms_kb_cves (cve TEXT, kb TEXT, PRIMARY KEY(cve, kb));
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
 
@@ -268,6 +269,17 @@ class Store:
         rows = await self._all("SELECT data FROM fin_earnings WHERE date>=? AND date<=? ORDER BY date, symbol",
                                (start, end))
         return [json.loads(r["data"]) for r in rows]
+
+    async def settings_get(self, prefix: str) -> dict[str, str]:
+        rows = await self._all("SELECT key, value FROM settings WHERE key LIKE ? ORDER BY key", (prefix + "%",))
+        return {r["key"][len(prefix):]: r["value"] for r in rows}
+
+    async def setting_set(self, key: str, value: str) -> None:
+        await self._exec("INSERT INTO settings(key, value) VALUES (?,?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    async def setting_delete(self, key: str) -> None:
+        await self._exec("DELETE FROM settings WHERE key=?", (key,))
 
     async def digest_last(self) -> tuple[str, int] | None:
         row = await self._one("SELECT key, ts FROM seen WHERE key LIKE 'digest:%' ORDER BY ts DESC, key DESC LIMIT 1")

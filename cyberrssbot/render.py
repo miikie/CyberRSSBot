@@ -261,19 +261,22 @@ def digest_status_embed(*, enabled: bool, channel: str, channel_ok: bool, upcomi
     return embed
 
 
-def channels_embed(health: list[tuple[str, int, str]]) -> discord.Embed:
+def channels_embed(health: list[tuple[str, int, str]], overridden=frozenset()) -> discord.Embed:
     lines = []
     for key, channel_id, state in health:
         if state == "unset":
-            lines.append(f"⚪ `{key}` not set")
+            line = f"⚪ `{key}` not set"
         elif state == "unchecked":
-            lines.append(f"⚪ `{key}` → <#{channel_id}> · not checked yet")
+            line = f"⚪ `{key}` → <#{channel_id}> · not checked yet"
         elif state == "ok":
-            lines.append(f"🟢 `{key}` → <#{channel_id}>")
+            line = f"🟢 `{key}` → <#{channel_id}>"
         else:
-            lines.append(f"🔴 `{key}` → <#{channel_id}> · {state} (posting disabled)")
-    return discord.Embed(title="Channel health", color=0x2B2D31,
-                         description=_join_limit(lines, "\n", 4000) or "No channels configured.")
+            line = f"🔴 `{key}` → <#{channel_id}> · {state} (posting disabled)"
+        lines.append(line + " · set with /channel" if key in overridden else line)
+    embed = discord.Embed(title="Channel health", color=0x2B2D31,
+                          description=_join_limit(lines, "\n", 4000) or "No channels configured.")
+    embed.set_footer(text="Change one with /channel set, undo with /channel reset.")
+    return embed
 
 
 def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Embed:

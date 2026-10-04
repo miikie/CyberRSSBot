@@ -123,8 +123,8 @@ runuser -u "$APP_USER" -- "$VENV/bin/pip" install -q --upgrade pip
 runuser -u "$APP_USER" -- "$VENV/bin/pip" install -q -r "$APP/requirements.txt"
 
 step "Adding new settings and sources to config.yaml"
-echo "Your existing values are kept. You will be asked for any channel ID that is not set yet;"
-echo "press Enter to skip one (its posts then go to the default channel)."
+echo "Your existing values are kept. You will be asked for any channel ID that is not set yet."
+echo "Press Enter to skip them all: channels are easier to set from Discord with /channel set."
 as_app "$VENV/bin/python" -m cyberrssbot --upgrade-config \
     || echo "config.yaml could not be upgraded automatically; it was left as it was."
 
@@ -205,8 +205,8 @@ journalctl -u cyberrssbot -n 25 --no-pager || true
 echo
 if systemctl is-active --quiet cyberrssbot; then
     echo "The bot is running and will start automatically on boot."
-    echo "Lines above that start with \"channel '...'\" are channels the bot cannot post to; fix the ID or the"
-    echo "permissions in Discord, then run: systemctl restart cyberrssbot"
+    echo "Lines above that start with \"channel '...'\" are channels the bot cannot post to. In Discord, fix the"
+    echo "permissions and run /channel check, or point the category elsewhere with /channel set."
     echo "Logs: journalctl -u cyberrssbot -f     Update: bash install.sh     Settings: nano $APP/config.yaml"
 else
     die "the service is not running; see the log above"

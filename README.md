@@ -31,7 +31,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Controlled first run.** A new source records its backlog without posting it, optionally posting only the last few hours so channels start populated without being flooded.
 - **Polite fetching.** Per-host pacing, ETag / Last-Modified conditional requests, `Retry-After` support and exponential backoff per source.
 - **Upgrades in place.** New settings and sources are merged into an existing configuration without touching the values already there, so an update is a single installer run.
-- **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel. At startup every configured channel is checked for existence and permissions; a channel that fails is reported and skipped instead of crashing the bot.
+- **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel. At startup every configured channel is checked for existence and permissions; a channel that fails is reported and skipped instead of crashing the bot. Channels can be reassigned from Discord with `/channel set`, without editing the config file or restarting.
 - **Scraper for feedless sites.** Any page can become a source with a CSS selector.
 - **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
 - **Deterministic digests.** Scheduled summaries built by rules from public reference data, with a coverage section that says what was and wasn't checked.
@@ -182,6 +182,9 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 | `/cve <id>` | The merged card for any tracked CVE or GHSA id |
 | `/kb <number>` | The stored card and CVE list for a tracked Windows security update |
 | `/poll <source>` | Poll a source immediately (moderators only) |
+| `/channel set <category> <channel>` | Send a category of posts (news, kev, microsoft, digest...) to a different channel, effective immediately (moderators only) |
+| `/channel reset <category>` | Put a category back on the channel from the config file (moderators only) |
+| `/channel list` · `/channel check` | Every category with its channel and whether the bot can post there; `check` re-tests them (moderators only) |
 | `/digest now [hours] [post]` | Build a digest for the last N hours as a private preview, or post it (moderators only) |
 | `/digest status` | Next scheduled edition, enabled editions and the last run (moderators only) |
 | `/entity <name>` | What the knowledge base knows about an actor, malware family or vendor, and recent items mentioning it |

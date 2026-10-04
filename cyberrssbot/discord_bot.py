@@ -41,6 +41,26 @@ class Poster:
                 return None
         return channel
 
+    async def load_overrides(self, store) -> None:
+        self.configured = dict(self.channels)
+        for key, value in (await store.settings_get("channel:")).items():
+            if key in self.channels and str(value).isdigit():
+                self.channels[key] = int(value)
+
+    async def set_channel(self, store, key: str, channel_id: int | None) -> list[str]:
+        if channel_id is None:
+            await store.setting_delete("channel:" + key)
+            self.channels[key] = getattr(self, "configured", self.channels).get(key, 0)
+        else:
+            await store.setting_set("channel:" + key, str(channel_id))
+            self.channels[key] = int(channel_id)
+        self._warned.discard(key)
+        return (await self.validate_channels()).get(key, [])
+
+    def overridden(self) -> set[str]:
+        configured = getattr(self, "configured", self.channels)
+        return {key for key, value in self.channels.items() if configured.get(key, 0) != value}
+
     def usable(self, key: str) -> bool:
         return bool(self.channels.get(key)) and key not in self.problems
 
@@ -174,7 +194,8 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
     @tree.command(name="status", description="Health of every feed source")
     async def status(interaction: discord.Interaction):
         states = {row["id"]: row for row in await app.store.all_sources()}
-        embeds = render.status_embeds(app.sources, states)[:9] + [render.channels_embed(app.poster.health())]
+        embeds = render.status_embeds(app.sources, states)[:9] + [
+            render.channels_embed(app.poster.health(), app.poster.overridden())]
         await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
     @tree.command(name="cve", description="Show everything the bot has merged for a CVE / GHSA id")
@@ -211,6 +232,60 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         data = row["data"]
         attachment = discord.File(io.BytesIO(msrc.kb_tsv(data)), filename=msrc.tsv_name(kb_id))
         await interaction.response.send_message(embed=render.kb_embed(data), file=attachment, ephemeral=True)
+
+    channel_group = app_commands.Group(name="channel", description="Where each category of post goes",
+                                       default_permissions=discord.Permissions(manage_guild=True))
+
+    async def category_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name=key, value=key)
+                for key in app.poster.channels if current.lower() in key.lower()][:25]
+
+    def category_state(key: str, issues: list[str]) -> str:
+        channel_id = app.poster.channels.get(key)
+        if not channel_id:
+            return f"`{key}` is not set. Its posts go to the default channel (digests and log messages go nowhere)."
+        if issues:
+            return (f"`{key}` now points at <#{channel_id}>, but the bot can't use it: {'; '.join(issues)}. "
+                    "Posting to it stays off until that is fixed; run `/channel check` afterwards.")
+        return f"`{key}` now posts to <#{channel_id}>. Cards already posted stay where they are."
+
+    @channel_group.command(name="set", description="Send a category of posts to a different channel")
+    @app_commands.describe(category="The channel key, e.g. news, kev, microsoft, digest",
+                           channel="The channel to post that category in")
+    @app_commands.autocomplete(category=category_autocomplete)
+    async def channel_set(interaction: discord.Interaction, category: str, channel: discord.TextChannel):
+        if category not in app.poster.channels:
+            await interaction.response.send_message(f"There is no category called `{category}`.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        issues = await app.poster.set_channel(app.store, category, channel.id)
+        await interaction.followup.send(category_state(category, issues), ephemeral=True)
+
+    @channel_group.command(name="reset", description="Put a category back on the channel from the config file")
+    @app_commands.describe(category="The channel key to reset")
+    @app_commands.autocomplete(category=category_autocomplete)
+    async def channel_reset(interaction: discord.Interaction, category: str):
+        if category not in app.poster.channels:
+            await interaction.response.send_message(f"There is no category called `{category}`.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        issues = await app.poster.set_channel(app.store, category, None)
+        await interaction.followup.send("Back to the config file's value. " + category_state(category, issues),
+                                        ephemeral=True)
+
+    @channel_group.command(name="list", description="Every category, its channel and whether the bot can post there")
+    async def channel_list(interaction: discord.Interaction):
+        embed = render.channels_embed(app.poster.health(), app.poster.overridden())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @channel_group.command(name="check", description="Re-check every channel's existence and permissions")
+    async def channel_check(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await app.poster.validate_channels()
+        embed = render.channels_embed(app.poster.health(), app.poster.overridden())
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    tree.add_command(channel_group)
 
     digest_group = app_commands.Group(name="digest", description="Intelligence digests",
                                       default_permissions=discord.Permissions(manage_guild=True))
@@ -300,6 +375,7 @@ class CyberRSSBotClient(discord.Client):
 
     async def setup_hook(self) -> None:
         await self.app.start()
+        await self.app.poster.load_overrides(self.app.store)
         guild_id = int(self.app.cfg["discord"].get("guild_id") or 0)
         if guild_id:
             guild = discord.Object(id=guild_id)
