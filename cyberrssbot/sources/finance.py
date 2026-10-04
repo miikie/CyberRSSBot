@@ -24,8 +24,7 @@ class SECEdgarSource(Source):
         super().__init__(app, cfg)
         fcfg = app.cfg["finance"]["filings"]
         self.forms = set(DEFAULT_FORMS)
-        if fcfg.get("form4"):
-            self.forms.add("4")
+        self.form4 = bool(fcfg.get("form4"))
         if fcfg.get("schedule_13g"):
             self.forms.add("SCHEDULE 13G")
         self.idle_interval = float(cfg.get("idle_interval", 3600))
@@ -70,10 +69,11 @@ class SECEdgarSource(Source):
         store = self.app.store
         recent = data.get("filings", {}).get("recent", {})
         rows = list(zip(recent.get("accessionNumber", []), recent.get("form", []), recent.get("items", []),
-                        recent.get("acceptanceDateTime", []), recent.get("filingDate", [])))
+                        recent.get("acceptanceDateTime", []), recent.get("filingDate", []),
+                        recent.get("primaryDocument", []) or [""] * len(recent.get("form", []))))
         now = self.now()
         count = 0
-        for acc, form, items, accepted, filed in reversed(rows[:60]):
+        for acc, form, items, accepted, filed, primary in reversed(rows[:60]):
             when = parse_time(accepted) or parse_time(filed)
             if not when or now - when > self.max_age:
                 continue
@@ -81,11 +81,24 @@ class SECEdgarSource(Source):
             if await store.seen_any([key]):
                 continue
             await store.mark_seen([key], self.id)
-            if normalize_form(form)[0] == "8-K" and "2.02" in (items or "").split(","):
-                await self.app.events.record(
+            base_form = normalize_form(form)[0]
+            index_url = SEC_INDEX.format(cik=cik, acc_path=acc.replace("-", ""), acc=acc)
+            if base_form == "8-K" and "2.02" in (items or "").split(","):
+                event_id, created = await self.app.events.record(
                     "earnings.report", ticker=ticker, cik=cik, company=self.app.finance.watch.name(ticker),
-                    occurred_at=when, dedup=acc, payload={"items": items},
-                    refs={"accession": acc, "filing": SEC_INDEX.format(cik=cik, acc_path=acc.replace("-", ""), acc=acc)})
+                    occurred_at=when, dedup=acc, payload={"items": items}, refs={"accession": acc, "filing": index_url})
+                if created:
+                    await self.app.fsignals.on_earnings(event_id)
+            if base_form == "SCHEDULE 13D":
+                await self.app.fsignals.on_13d(ticker, cik, acc, form, when, index_url)
+            if base_form == "4":
+                if self.form4 and primary:
+                    try:
+                        await self.app.fsignals.on_form4(ticker, cik, acc, primary, when,
+                                                         post=not seed or bool(self.lookback and now - when <= self.lookback))
+                    except (FetchError, ValueError) as exc:
+                        log.warning("form 4 %s for %s skipped: %s", acc, ticker, exc)
+                continue
             if not self._wanted(form):
                 continue
             described = describe_filing(form, items)
@@ -187,7 +200,11 @@ class QuotesSource(Source):
             else:
                 continue
             context = await self.app.finance.context_for(symbol)
-            embed = render.move_alert_embed(symbol, self.app.finance.watch.name(symbol), q, level, self.pct, context)
+            sector = quotes.get("CIBR", {}).get("dp")
+            sector = float(sector) if sector is not None else None
+            explanation = await self.app.fsignals.explain(symbol, float(q["dp"]), sector, datetime.now(timezone.utc))
+            embed = render.move_alert_embed(symbol, self.app.finance.watch.name(symbol), q, level, self.pct, context,
+                                            explanation, self.app.poster.jump_url, sector)
             await self.app.poster.send(self.channel, embed=embed)
             await store.mark_seen(keys, self.id)
             posted += 1
@@ -197,7 +214,11 @@ class QuotesSource(Source):
         key = f"fin:summary:{day}"
         if await self.app.store.seen_any([key]) or not quotes:
             return 0
-        embed = render.close_summary_embed(day, quotes, self.app.finance.watch)
+        unexplained = [(e["ticker"], float(e["payload"].get("dp") or 0))
+                       for e in await self.app.store.events_query(type_="move.unexplained", since=day.isoformat(),
+                                                                  until=(day + timedelta(days=7)).isoformat())
+                       if parse_time(e["occurred_at"]).astimezone(NY).date() == day]
+        embed = render.close_summary_embed(day, quotes, self.app.finance.watch, unexplained)
         await self.app.poster.send(self.channel, embed=embed)
         await self.app.store.mark_seen([key], self.id)
         return 1

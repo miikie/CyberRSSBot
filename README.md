@@ -53,11 +53,11 @@ Channels are grouped into categories. Each row is one channel; the keys are the 
 | News & Policy | articles | Security journalism and law-enforcement press releases |
 | News & Policy | supply-chain-policy | Targets for the optional supply-chain and privacy-law routes |
 | Cyber-Finance | cyber-markets | Press releases, investor relations and newswire items for the watchlist |
-| Cyber-Finance | market-tape | The daily close summary and big-move alerts |
-| Cyber-Finance | sec-filings | Watchlist SEC filings |
+| Cyber-Finance | market-tape | The daily close summary and big-move alerts with likely catalysts |
+| Cyber-Finance | sec-filings | Watchlist SEC filings, insider open-market purchases and insider selling clusters |
 | Cyber-Finance | incident-disclosures | Market-wide 8-K Item 1.05 incidents and Item 8.01 cyber disclosures, plus compact cards when a leak-site claim or a widely covered breach names a listed company |
 | Cyber-Finance | earnings | The earnings calendar and same-day reminders |
-| Cyber-Finance | signals | Signals and evidence reports |
+| Cyber-Finance | signals | Vendor vulnerability pressure spikes and the weekly pressure ranking |
 | Admin (private) | bot-log | Source failures and recoveries, channel checks, digest and layout runs |
 
 ### Server layout

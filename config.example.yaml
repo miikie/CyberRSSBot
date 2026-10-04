@@ -85,7 +85,9 @@ finance:
   move_alert_pct: 7
   summary_delay_minutes: 20
   cluster_window_hours: 48
-  filings: {form4: false, schedule_13g: false}
+  # form4: parse Form 4 filings for insider events (only open-market buys and selling clusters
+  # are posted). schedule_13g: also post passive 13G stakes.
+  filings: {form4: true, schedule_13g: false}
   earnings: {weekly_weekday: 0, weekly_hour_utc: 13, same_day_reminder: true, reminder_hour_et: 8,
              refresh_hours: 12, horizon_days: 90}
   companies:
@@ -193,6 +195,45 @@ exposure:
     check point: CHKP
     f5: FFIV
   private: [ivanti, citrix, cloud software group, sonicwall]
+
+# Signals posted to #signals and recorded as events (so /study can test them).
+signals:
+  # Vendor vulnerability pressure per watchlist and exposure ticker.
+  pressure:
+    # Points per item: a KEV entry, an exploited-labelled news story, a CVE with CVSS 9 or more.
+    kev: 5
+    exploited_news: 3
+    critical_cve: 1
+    # Plus this much per outlet covering the item, counting at most outlet_cap outlets.
+    per_outlet: 0.5
+    outlet_cap: 5
+    # Points halve every half_life_days and drop out after window_days.
+    half_life_days: 14
+    window_days: 30
+    # z-score against the ticker's own score over the last baseline_days (at least min_history_days).
+    baseline_days: 365
+    min_history_days: 90
+    # A spike needs z >= z_spike and at least min_items distinct items in the window; spikes are posted.
+    z_spike: 2.0
+    min_items: 3
+    # The weekly ranking is posted on the first evening on or after this weekday (0 = Monday).
+    weekly_weekday: 0
+    weekly_top: 10
+  # Catalyst attribution on big-move alerts.
+  attribution:
+    # Events from this many hours before the alert are considered, weighted by type and halving every
+    # half_life_hours. The top 3 are listed.
+    lookback_hours: 72
+    half_life_hours: 24
+    # "With sector" when the stock's move differs from CIBR's by less than this share of the move.
+    sector_share: 0.4
+    # Weight per event type; anything not listed counts default_weight.
+    default_weight: 1
+    type_weights: {sec.8k.1_05: 5, earnings.report: 5, mna.announce: 5, guidance.raise: 4, guidance.cut: 4,
+                   strategic.review: 4, ownership.13d: 3, ransomware.claim.public: 3, breach.news.public: 3,
+                   sec.8k.8_01_cyber: 3, sec.8k.1_05_amendment: 3, guidance.reaffirm: 2, tone.shift: 2,
+                   insider.open_buy: 2, insider.cluster_sell: 2, pressure.spike: 2, kev.vendor: 1,
+                   vuln.vendor_critical: 1}
 
 # Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors, the
 # CISA KEV vendor/product list and MITRE's CWE names, plus the manual lists in `extras_dir`.
@@ -403,6 +444,8 @@ sources:
   # ticker that appears in an event. Refreshed after each close; posts nothing.
   - {id: prices, type: prices, name: Daily prices, channel: finance-tape, history_years: 3,
      refresh_minutes_after_close: 75}
+  # Daily after the close: vendor vulnerability pressure, spike posts and the weekly ranking.
+  - {id: signals, type: signals, name: Signals, channel: finance-signals, minutes_after_close: 100}
   - {id: sec-edgar,    type: sec_edgar,    name: SEC EDGAR,         channel: finance-filings, interval: 600, idle_interval: 3600}
   - {id: fin-quotes,   type: quotes,       name: Finnhub quotes,    channel: finance-tape, interval: 900}
   - {id: fin-earnings, type: earnings,     name: Finnhub earnings,  channel: finance-earnings, interval: 1800}

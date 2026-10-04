@@ -16,6 +16,7 @@ from .digest import DigestRunner
 from .engine import StoryEngine, VulnEngine
 from .events import EventLog
 from .finance import FinanceEngine
+from .fsignals import FinanceSignals
 from .http import FetchError, Http
 from .incidents import IncidentDesk
 from .kb import KnowledgeBase
@@ -65,6 +66,7 @@ class App:
         self.events = EventLog(self)
         self.study = Study(self)
         self.incidents = IncidentDesk(self)
+        self.fsignals = FinanceSignals(self)
         self.vulns = VulnEngine(self)
         self.intel = Intel(cfg, self.kb, self.vulns.watch_re)
         self.digest = DigestRunner(self)
@@ -115,25 +117,26 @@ class App:
             self.tasks.append(asyncio.create_task(self._run_source(src, i * 3.0), name=f"source:{src.id}"))
         self.tasks.append(asyncio.create_task(self._flush_loop(), name="flush"))
         self.tasks.append(asyncio.create_task(self._kb_loop(), name="kb"))
+        if (self.cfg.get("digest") or {}).get("enabled"):
+            self.tasks.append(asyncio.create_task(self.digest.loop(), name="digest"))
         if ((self.cfg.get("finance") or {}).get("events") or {}).get("backfill", True):
             self.tasks.append(asyncio.create_task(self._backfill_once(), name="event-backfill"))
 
     async def _backfill_once(self) -> None:
         await asyncio.sleep(120)
         try:
-            result = await backfill.run(self)
+            result = await backfill.run(self, steps=backfill.NETWORK_STEPS)
+            prices = next((s for s in self.sources if s.cfg.get("type") == "prices"), None)
+            if prices:
+                await self.poll_once(prices)
+            result.update(await backfill.run(self, steps=backfill.PRICE_STEPS))
             done = {step: counts for step, counts in result.items() if "skipped" not in counts}
             if done:
                 log.info("event backfill: %s", done)
-                prices = next((s for s in self.sources if s.cfg.get("type") == "prices"), None)
-                if prices:
-                    prices.wake.set()
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("event backfill failed")
-        if (self.cfg.get("digest") or {}).get("enabled"):
-            self.tasks.append(asyncio.create_task(self.digest.loop(), name="digest"))
 
     async def intel_mentions(self, entities: list, days: int, limit: int = 8) -> list[dict]:
         wanted = {e.id for e in entities}

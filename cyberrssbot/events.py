@@ -20,6 +20,16 @@ EVENT_TYPES = {
     "breach.news.public": "Breach story covered by 2 or more outlets naming a listed company",
     "kev.vendor": "CISA KEV entry for a product of an exposure-mapped vendor",
     "vuln.vendor_critical": "Exploited or CVSS 9+ vulnerability in a mapped vendor's product, covered by 2+ outlets",
+    "pressure.spike": "Vendor vulnerability pressure 2+ standard deviations above the ticker's own history",
+    "move.unexplained": "Idiosyncratic price move with no recorded event in the previous 72 hours",
+    "insider.open_buy": "Insider open-market purchase (Form 4 code P, not under a 10b5-1 plan)",
+    "insider.cluster_sell": "3+ insiders selling outside 10b5-1 plans within 10 sessions",
+    "ownership.13d": "Schedule 13D or 13D/A: activist stake of 5% or more",
+    "tone.shift": "Earnings release tone 1.5+ standard deviations from the prior 8 releases",
+    "guidance.raise": "Guidance or outlook raised",
+    "guidance.cut": "Guidance or outlook lowered or withdrawn",
+    "guidance.reaffirm": "Guidance or outlook reaffirmed",
+    "strategic.review": "Review of strategic alternatives announced",
 }
 TIMINGS = ("pre", "intraday", "post", "closed")
 

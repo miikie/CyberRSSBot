@@ -435,7 +435,18 @@ def finance_item_embed(d: dict) -> discord.Embed:
     return embed
 
 
-def move_alert_embed(symbol: str, name: str, q: dict, level: int, pct: float, context: dict | None) -> discord.Embed:
+def event_link(ev: dict, jump_url=None) -> str:
+    refs = ev["source_refs"]
+    post = refs.get("message") or refs.get("post")
+    target = (jump_url(*post) if post and jump_url else None) or refs.get("filing") or refs.get("url")
+    label = ev["type"]
+    detail = ev["payload"].get("title") or ev["payload"].get("victim") or ev["payload"].get("name") or ""
+    text = f"`{label}`" + (f" {truncate(detail, 70)}" if detail else "")
+    return f"{text} · [link]({target})" if target else text
+
+
+def move_alert_embed(symbol: str, name: str, q: dict, level: int, pct: float, context: dict | None,
+                     explanation: dict | None = None, jump_url=None, sector_dp: float | None = None) -> discord.Embed:
     dp = float(q["dp"])
     arrow = "📈" if dp > 0 else "📉"
     embed = discord.Embed(
@@ -451,11 +462,21 @@ def move_alert_embed(symbol: str, name: str, q: dict, level: int, pct: float, co
     if context:
         embed.add_field(name="Related", value=f"[{truncate(context['title'], 150)}]({context['url']}) — {context['source']}",
                         inline=False)
+    if explanation:
+        sector = f"CIBR {sector_dp:+.2f}%" if sector_dp is not None else "CIBR not available"
+        if explanation["classification"] == "with sector":
+            kind = f"Observed moving with the sector ({sector})"
+        else:
+            kind = f"Idiosyncratic: differs from the sector by more than 40% of the move ({sector})"
+        embed.add_field(name="Move", value=kind, inline=False)
+        lines = [f"• {event_link(ev, jump_url)}" for ev in explanation["catalysts"]]
+        embed.add_field(name="Recorded events, last 72 hours",
+                        value=_join_limit(lines, "\n") or "None recorded. Logged as an unexplained move.", inline=False)
     embed.set_footer(text=FIN_FOOTER)
     return embed
 
 
-def close_summary_embed(day, quotes: dict[str, dict], watch) -> discord.Embed:
+def close_summary_embed(day, quotes: dict[str, dict], watch, unexplained: list | None = None) -> discord.Embed:
     companies = sorted(((s, q) for s, q in quotes.items() if s in watch.companies),
                        key=lambda sq: float(sq[1].get("dp") or 0), reverse=True)
     lines = [f"{s:<5} {float(q['c']):>9.2f} {float(q.get('dp') or 0):>+7.2f}%" for s, q in companies]
@@ -473,6 +494,9 @@ def close_summary_embed(day, quotes: dict[str, dict], watch) -> discord.Embed:
         embed.add_field(name="Biggest gainer", value=f"{top[0]} {float(top[1].get('dp') or 0):+.2f}%")
         embed.add_field(name="Biggest loser", value=f"{bottom[0]} {float(bottom[1].get('dp') or 0):+.2f}%")
         embed.add_field(name="Average", value=f"{avg:+.2f}%")
+    if unexplained:
+        embed.add_field(name="Unexplained moves", value=", ".join(f"{s} {dp:+.2f}%" for s, dp in unexplained),
+                        inline=False)
     embed.set_footer(text=FIN_FOOTER)
     return embed
 
@@ -630,5 +654,61 @@ def events_embed(ticker: str, days: int, rows: list[dict], jump_url) -> discord.
         lines.append(line + (" · " + " · ".join(targets) if targets else ""))
     embed = discord.Embed(title=truncate(f"{ticker} · events in the last {days} days", 256), color=DIGEST_COLOR,
                           description=_join_limit(lines, "\n", 4000) or "No recorded events.")
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+SIGNAL_COLOR = 0x6A1B9A
+
+
+def _contributors(top: list[dict]) -> str:
+    lines = []
+    for c in top:
+        title = truncate(c.get("title") or "", 80)
+        lines.append(f"• [{title}]({c['url']})" if c.get("url") else f"• {title}")
+    return _join_limit(lines, "\n") or "—"
+
+
+def pressure_spike_embed(ev: dict) -> discord.Embed:
+    p = ev["payload"]
+    embed = discord.Embed(title=truncate(f"Vulnerability pressure spike · {ev['ticker']}", 256), color=SIGNAL_COLOR,
+                          description=(f"Observed pressure score {p['score']:.1f}, {p['z']:.1f} standard deviations above "
+                                       f"this ticker's own history, from {p['items']} distinct items in the last 30 days. "
+                                       "A signal, not a forecast."))
+    embed.add_field(name="Top contributors", value=_contributors(p.get("top") or []), inline=False)
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+def pressure_table_embed(rows: list[tuple[str, dict]], day, top: int = 10) -> discord.Embed:
+    lines = []
+    for ticker, p in rows[:top]:
+        z = f"{p['z']:+.1f}" if p["z"] is not None else "n/a"
+        lines.append(f"**{ticker}** · score {p['score']:.1f} · z {z} · {p['items']} item{'s' if p['items'] != 1 else ''}")
+        for c in p["top"]:
+            lines.append(f"  ↳ [{truncate(c.title, 70)}]({c.url})" if c.url else f"  ↳ {truncate(c.title, 70)}")
+    embed = discord.Embed(title=f"Vendor vulnerability pressure · week of {day:%b %d, %Y}", color=SIGNAL_COLOR,
+                          description=_join_limit(lines, "\n", 4000) or "No vulnerability pressure recorded.")
+    embed.add_field(name="How to read it", inline=False, value=(
+        "30-day score: KEV entries 5, exploited news 3, CVSS 9+ CVEs 1, plus 0.5 per covering outlet, halving every "
+        "14 days. z compares it with the ticker's own last year; n/a means under 90 days of history."))
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+def insider_embed(ev: dict) -> discord.Embed:
+    p = ev["payload"]
+    if ev["type"] == "insider.open_buy":
+        title = f"Insider open-market purchase · {ev['ticker']}"
+        lines = [f"{p.get('owner')} ({p.get('role') or 'insider'}) bought {p.get('shares') or 0:,.0f} shares"
+                 + (f" at about ${p['price']:,.2f}" if p.get("price") else "") + f", ${p.get('value') or 0:,.0f} in total.",
+                 "Not reported as part of a 10b5-1 trading plan."]
+    else:
+        title = f"Insider selling cluster · {ev['ticker']}"
+        lines = [f"{len(p.get('owners') or [])} insiders sold outside 10b5-1 plans between {p.get('start')} and "
+                 f"{p.get('end')}: {', '.join(p.get('names') or [])}.",
+                 f"{p.get('sales')} sale{'s' if p.get('sales') != 1 else ''}, ${p.get('value') or 0:,.0f} in total."]
+    embed = discord.Embed(title=truncate(title, 256), url=ev["source_refs"].get("filing"), color=SIGNAL_COLOR,
+                          description="\n".join(lines))
     embed.set_footer(text=FIN_FOOTER)
     return embed

@@ -185,9 +185,14 @@ class FinanceEngine:
         }
         if item["kind"] == "filing":
             data["filings"].append({"label": item["filing_label"], "url": item["url"]})
+        if item["kind"] != "filing":
+            data["tone"] = self.app.fsignals.lexicon.score(f"{data['title']}. {data['summary']}")
         fid = await store.fin_insert(now, data["tickers"], item["event"], tokens, data)
-        if item["event"] == "mna":
-            await self._mna_events(fid, data, data["tickers"])
+        if item["kind"] != "filing":
+            await self.app.fsignals.on_release(fid, data, data["tickers"])
+        elif item["event"] == "mna":
+            await self.app.fsignals.mna_events(f"fin:{fid}", data["title"], data["tickers"],
+                                               data.get("published") or now, {"url": data["url"]}, data["title"])
         self._recent.append({"id": fid, "ts": now, "tickers": set(tickers), "event": item["event"], "tokens": tokens})
         if seed:
             return
@@ -213,16 +218,12 @@ class FinanceEngine:
                 data["also"].append({"source": item["source"], "url": item["url"]})
                 changed = True
         if changed and data.get("event") == "mna":
-            await self._mna_events(row["id"], data, merged)
+            await self.app.fsignals.mna_events(f"fin:{row['id']}", f"{data['title']}. {data.get('summary') or ''}",
+                                               merged, data.get("published") or time.time(), {"url": data["url"]},
+                                               data["title"])
         if changed:
             await self.app.store.fin_update(row["id"], data=data, tickers=merged,
                                             dirty=1 if row["message_id"] else None)
-
-    async def _mna_events(self, fid: int, data: dict, tickers) -> None:
-        when = data.get("published") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        for ticker in tickers:
-            await self.app.events.record("mna.announce", ticker=ticker, occurred_at=when, dedup=f"fin:{fid}",
-                                         refs={"url": data["url"]}, payload={"title": data["title"], "role": "unknown"})
 
     async def ingest_feed_item(self, src, entry: dict, seed: bool) -> None:
         text = f"{entry['title']} {entry['summary']}"

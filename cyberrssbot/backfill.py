@@ -212,11 +212,106 @@ async def earnings_history(app) -> dict[str, int]:
     return counts
 
 
-async def run(app, *, steps: tuple[str, ...] = ("1.05", "8.01", "kev", "earnings")) -> dict[str, dict[str, int]]:
+async def _count_new(app, coro) -> dict[str, int]:
+    before = await app.store.event_counts()
+    await coro
+    after = await app.store.event_counts()
+    return {k: v - before.get(k, 0) for k, v in after.items() if v != before.get(k, 0)}
+
+
+async def releases_history(app) -> dict[str, int]:
+    async def go():
+        for row in await app.store._all("SELECT id, data FROM fin_items ORDER BY id"):
+            d = json.loads(row["data"])
+            if d.get("kind") != "filing":
+                if "tone" not in d:
+                    d["tone"] = app.fsignals.lexicon.score(f"{d['title']}. {d.get('summary') or ''}")
+                    await app.store.fin_update(row["id"], data=d)
+                await app.fsignals.on_release(row["id"], d, d.get("tickers") or [])
+            elif d.get("event") == "mna":
+                await app.fsignals.mna_events(f"fin:{row['id']}", d["title"], d.get("tickers") or [],
+                                              d.get("published"), {"url": d["url"]}, d["title"])
+    return await _count_new(app, go())
+
+
+async def earnings_tone_history(app) -> dict[str, int]:
+    async def go():
+        for ev in await app.store.events_query(type_="earnings.report"):
+            if "tone" not in ev["payload"]:
+                await app.fsignals.on_earnings(ev["id"])
+    return await _count_new(app, go())
+
+
+async def ownership_history(app) -> dict[str, int]:
+    form4 = bool((app.cfg["finance"].get("filings") or {}).get("form4"))
+    cutoff = datetime.now(timezone.utc).replace(year=datetime.now(timezone.utc).year - EARNINGS_YEARS)
+
+    async def go():
+        for ticker, info in app.finance.watch.companies.items():
+            if not info.get("cik"):
+                continue
+            cik = int(info["cik"])
+            try:
+                fetched = await app.http.get(incidents.SUBMISSIONS_URL.format(cik=cik),
+                                             headers=sec_headers(app, "application/json"), conditional=False)
+            except FetchError as exc:
+                log.info("ownership backfill for %s failed: %s", ticker, exc)
+                continue
+            recent = json.loads(fetched.body).get("filings", {}).get("recent", {})
+            rows = list(zip(recent.get("accessionNumber", []), recent.get("form", []),
+                            recent.get("acceptanceDateTime", []), recent.get("primaryDocument", [])))
+            for acc, form, accepted, primary in reversed(rows):
+                when = parse_time(accepted)
+                if not when or when < cutoff:
+                    continue
+                index = (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc.replace('-', '')}/{acc}-index.htm")
+                if form.replace("SC ", "SCHEDULE ").startswith("SCHEDULE 13D"):
+                    await app.fsignals.on_13d(ticker, cik, acc, form, when, index)
+                elif form == "4" and form4 and primary:
+                    try:
+                        await app.fsignals.on_form4(ticker, cik, acc, primary, when, post=False)
+                    except (FetchError, ValueError) as exc:
+                        log.info("form 4 %s skipped: %s", acc, exc)
+    return await _count_new(app, go())
+
+
+async def pressure_history(app) -> dict[str, int]:
+    today = datetime.now(timezone.utc).date()
+    return await _count_new(app, app.fsignals.pressure_history(
+        today.replace(year=today.year - EARNINGS_YEARS), today))
+
+
+async def moves_history(app) -> dict[str, int]:
+    from . import study
+    from .market import NY
+    pct = float(app.cfg["finance"]["move_alert_pct"]) / 100
+    sector = study.daily_returns(await app.store.prices_for("CIBR"))
+    if not sector:
+        raise RuntimeError("no CIBR prices yet")
+
+    async def go():
+        for ticker in app.finance.watch.companies:
+            for day, ret in sorted(study.daily_returns(await app.store.prices_for(ticker)).items()):
+                if abs(ret) < pct:
+                    continue
+                close = app.market.session(datetime.fromisoformat(day).date())
+                when = close[1] if close else datetime.fromisoformat(day).replace(hour=16, tzinfo=NY)
+                await app.fsignals.explain(ticker, ret * 100, sector[day] * 100 if day in sector else None, when)
+    return await _count_new(app, go())
+
+
+NETWORK_STEPS = ("1.05", "8.01", "kev", "earnings", "releases", "earnings_tone", "ownership")
+PRICE_STEPS = ("pressure", "moves")
+
+
+async def run(app, *, steps: tuple[str, ...] = NETWORK_STEPS + PRICE_STEPS) -> dict[str, dict[str, int]]:
     out = {}
     jobs = {"1.05": lambda: filings_history(app, "", "1.05"),
             "8.01": lambda: filings_history(app, '"cybersecurity incident"', "8.01"),
-            "kev": lambda: kev_history(app), "earnings": lambda: earnings_history(app)}
+            "kev": lambda: kev_history(app), "earnings": lambda: earnings_history(app),
+            "releases": lambda: releases_history(app), "earnings_tone": lambda: earnings_tone_history(app),
+            "ownership": lambda: ownership_history(app), "pressure": lambda: pressure_history(app),
+            "moves": lambda: moves_history(app)}
     for step in steps:
         key = f"{DONE_KEY}.{step}"
         if await app.store.setting_get(key):

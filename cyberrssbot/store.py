@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS prices (
     volume INTEGER, source TEXT, PRIMARY KEY(symbol, date));
 CREATE TABLE IF NOT EXISTS price_splits (symbol TEXT NOT NULL, date TEXT NOT NULL, ratio REAL, PRIMARY KEY(symbol, date));
 CREATE TABLE IF NOT EXISTS event_returns (event_id INTEGER PRIMARY KEY, data TEXT NOT NULL, computed INTEGER);
+CREATE TABLE IF NOT EXISTS insider_tx (
+    accession TEXT NOT NULL, idx INTEGER NOT NULL, ticker TEXT, owner_cik TEXT, owner TEXT, role TEXT, date TEXT,
+    code TEXT, shares REAL, price REAL, value REAL, owned_after REAL, plan INTEGER, cover INTEGER DEFAULT 0,
+    PRIMARY KEY(accession, idx));
+CREATE INDEX IF NOT EXISTS idx_insider_ticker ON insider_tx(ticker, date);
 CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
 
@@ -77,8 +82,16 @@ async def _m1_claims(db) -> None:
             await db.execute("UPDATE stories SET data=? WHERE id=?", (json.dumps(data), row["id"]))
 
 
+async def _m3_insider_cover(db) -> None:
+    async with db.execute("PRAGMA table_info(insider_tx)") as cur:
+        columns = {row[1] for row in await cur.fetchall()}
+    if "cover" not in columns:
+        await db.execute("ALTER TABLE insider_tx ADD COLUMN cover INTEGER DEFAULT 0")
+
+
 MIGRATIONS = [
     (1, "ransomware.live claims: store group and victim on existing stories", _m1_claims),
+    (3, "insider_tx.cover: sales made to cover tax withholding", _m3_insider_cover),
 ]
 
 SOURCE_FIELDS = {"last_ok", "last_err", "last_err_ts", "fails", "seeded", "items", "cursor"}
@@ -577,6 +590,23 @@ class Store:
     async def splits_for(self, symbol: str) -> dict[str, float]:
         rows = await self._all("SELECT date, ratio FROM price_splits WHERE symbol=?", (symbol.upper(),))
         return {r["date"]: r["ratio"] for r in rows}
+
+    async def insider_put(self, rows: list[dict]) -> None:
+        await self.db.executemany(
+            "INSERT OR REPLACE INTO insider_tx(accession, idx, ticker, owner_cik, owner, role, date, code, shares, "
+            "price, value, owned_after, plan, cover) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(r["accession"], r["idx"], r["ticker"], r["owner_cik"], r["owner"], r["role"], r["date"], r["code"],
+              r["shares"], r["price"], r["value"], r["owned_after"], int(bool(r["plan"])), int(bool(r.get("cover"))))
+             for r in rows])
+        await self.db.commit()
+
+    async def insider_sales(self, ticker: str, start: str, end: str) -> list[dict]:
+        rows = await self._all("SELECT * FROM insider_tx WHERE ticker=? AND code='S' AND plan=0 AND cover=0 AND date>=? AND date<=? "
+                               "ORDER BY date, accession, idx", (ticker.upper(), start, end))
+        return [dict(r) for r in rows]
+
+    async def event_set_payload(self, event_id: int, payload: dict) -> None:
+        await self._exec("UPDATE events SET payload=? WHERE id=?", (json.dumps(payload, sort_keys=True), event_id))
 
     async def event_return_get(self, event_id: int) -> dict | None:
         row = await self._one("SELECT data FROM event_returns WHERE event_id=?", (event_id,))

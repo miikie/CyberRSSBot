@@ -3,6 +3,7 @@ from .finance import CompanyNewsSource, EarningsSource, QuotesSource, SECEdgarSo
 from .msrc import MSRCCvrfSource
 from .prices import PricesSource
 from .sec_incidents import SECIncidentsSource
+from .signals import SignalsSource
 from .vulns import EPSSSource, GHSASource, KEVSource, NVDSource
 
 TYPES = {
@@ -15,6 +16,7 @@ TYPES = {
     "msrc_cvrf": MSRCCvrfSource,
     "sec_incidents": SECIncidentsSource,
     "prices": PricesSource,
+    "signals": SignalsSource,
     "sec_edgar": SECEdgarSource,
     "quotes": QuotesSource,
     "earnings": EarningsSource,
