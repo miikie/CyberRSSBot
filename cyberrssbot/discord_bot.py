@@ -301,10 +301,11 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
 
     @digest_group.command(name="now", description="Build an intelligence digest for the last N hours")
     @app_commands.describe(hours="Length of the window in hours (default 6)",
-                           post="Post it to the digest channel instead of previewing it privately")
+                           post="Post it to the digest channel instead of replying here",
+                           private="Only show the reply to you")
     async def digest_now(interaction: discord.Interaction, hours: app_commands.Range[int, 1, 168] = 6,
-                         post: bool = False):
-        await interaction.response.defer(ephemeral=True, thinking=True)
+                         post: bool = False, private: bool = False):
+        await interaction.response.defer(ephemeral=post or private, thinking=True)
         built = await app.digest.build(float(hours), datetime.now(timezone.utc), "on-demand")
         if post:
             posted = await app.digest.post(built)
@@ -313,21 +314,21 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
             await interaction.followup.send(note, ephemeral=True)
             return
         for index, message in enumerate(built.messages[:10]):
-            await interaction.followup.send(embed=render.digest_embed(built, message, index), ephemeral=True)
+            await interaction.followup.send(embed=render.digest_embed(built, message, index), ephemeral=private)
 
     tree.add_command(digest_group)
 
     @tree.command(name="entity", description="What the knowledge base knows about an actor, malware family or vendor")
-    @app_commands.describe(name="e.g. APT29, Storm-2603, LockBit, Cobalt Strike")
-    async def entity(interaction: discord.Interaction, name: str):
+    @app_commands.describe(name="e.g. APT29, Storm-2603, LockBit, Cobalt Strike", private="Only show the reply to you")
+    async def entity(interaction: discord.Interaction, name: str, private: bool = False):
         found = app.kb.lookup(name)
         if not found:
             await interaction.response.send_message(f"`{name}` isn't in the knowledge base.", ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(ephemeral=private, thinking=True)
         days = int(app.cfg["digest"].get("entity_lookback_days", 14))
         mentions = await app.intel_mentions(found, days)
-        await interaction.followup.send(embed=render.entity_embed(found, mentions, days), ephemeral=True)
+        await interaction.followup.send(embed=render.entity_embed(found, mentions, days), ephemeral=private)
 
     async def ticker_autocomplete(interaction: discord.Interaction, current: str):
         cur = current.strip().lower()

@@ -60,6 +60,7 @@ _SENTENCE_END_RE = re.compile(r"[.!?]+[\"”’')\]]*\s+")
 _DOMAIN_RE = re.compile(r"^[\w-]+(\.[\w-]+)*\.(com|net|org|io|co|uk|news|media)$", re.IGNORECASE)
 _ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _CLAUSE_RE = re.compile(r"[,;:(]|\.\s|\s[-–—]\s")
+_LEAD_SYMBOL_RE = re.compile(r"^[^\w\"'“‘(\[$€£#@]+")
 _DATED_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MD_RE = re.compile(r"([\\*_`~|])")
 
@@ -118,7 +119,7 @@ def _key(value: str) -> str:
 
 
 def clean_headline(title: str, outlets: list[str], kb=None) -> str:
-    text = _WS_RE.sub(" ", html.unescape(title or "")).strip()
+    text = _LEAD_SYMBOL_RE.sub("", _WS_RE.sub(" ", html.unescape(title or "")).strip())
     known = {_key(o) for o in outlets}
     changed = True
     while changed:
