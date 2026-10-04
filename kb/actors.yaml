@@ -1,0 +1,14 @@
+# Manual threat-actor entries and extra aliases.
+# An entry whose name or alias already exists in ATT&CK or the MISP galaxy is merged into that actor,
+# so this file is also how you teach the bot that two names mean the same group.
+- name: Storm-2603
+  aliases: [Longlegs]
+- name: Scattered Spider
+  aliases: [UNC3944, Octo Tempest, Muddled Libra, 0ktapus]
+- name: ShinyHunters
+  aliases: [UNC6040, Shiny Hunters]
+- name: Lapsus$
+  aliases: [LAPSUS$, DEV-0537, Strawberry Tempest]
+- name: Scattered Lapsus$ Hunters
+- name: Salt Typhoon
+  aliases: [GhostEmperor, Earth Estries, UNC2286]

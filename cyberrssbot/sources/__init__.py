@@ -1,5 +1,6 @@
 from .feeds import RSSSource, ScrapeSource
 from .finance import CompanyNewsSource, EarningsSource, QuotesSource, SECEdgarSource
+from .msrc import MSRCCvrfSource
 from .vulns import EPSSSource, GHSASource, KEVSource, NVDSource
 
 TYPES = {
@@ -9,6 +10,7 @@ TYPES = {
     "kev": KEVSource,
     "ghsa": GHSASource,
     "epss": EPSSSource,
+    "msrc_cvrf": MSRCCvrfSource,
     "sec_edgar": SECEdgarSource,
     "quotes": QuotesSource,
     "earnings": EarningsSource,

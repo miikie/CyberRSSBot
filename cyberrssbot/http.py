@@ -77,7 +77,7 @@ class Http:
             await self.session.close()
 
     async def get(self, url: str, *, params: dict | None = None, headers: dict | None = None,
-                  conditional: bool = True, retries: int = 2) -> Fetched | None:
+                  conditional: bool = True, retries: int = 2, timeout: float | None = None) -> Fetched | None:
         host = (urlsplit(url).hostname or "").lower()
         cache_key = url + ("?" + urlencode(sorted(params.items())) if params else "")
         hdrs = {"Accept": FEED_ACCEPT, **(headers or {})}
@@ -88,17 +88,17 @@ class Http:
             if last_mod:
                 hdrs["If-Modified-Since"] = last_mod
 
+        extra = {"timeout": aiohttp.ClientTimeout(total=timeout)} if timeout else {}
         for attempt in range(retries + 1):
             await self.limiter.wait(host)
             try:
-                async with self.session.get(url, params=params, headers=hdrs, allow_redirects=True) as resp:
+                async with self.session.get(url, params=params, headers=hdrs, allow_redirects=True,
+                                            **extra) as resp:
                     status = resp.status
                     if status == 304:
                         return None
                     if status < 400:
                         body = await resp.read()
-                        if not conditional:
-                            return Fetched(body, cache_key)
                         return Fetched(body, cache_key, resp.headers.get("ETag"), resp.headers.get("Last-Modified"))
                     retry_after = _retry_after(resp.headers.get("Retry-After"))
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:

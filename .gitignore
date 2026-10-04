@@ -46,3 +46,5 @@ desktop.ini
 notes.md
 setup.md
 *.enc
+
+kb_cache/

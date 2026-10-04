@@ -8,10 +8,13 @@ import random
 import tempfile
 import time
 
-from . import render
+from . import msrc, render
+from .classify import Intel
+from .digest import DigestRunner
 from .engine import StoryEngine, VulnEngine
 from .finance import FinanceEngine
 from .http import FetchError, Http
+from .kb import KnowledgeBase
 from .market import MarketCalendar
 from .sources import build_sources
 from .store import Store
@@ -41,7 +44,12 @@ class App:
             overrides["services.nvd.nist.gov"] = min(float(overrides.get("services.nvd.nist.gov", 0.7)), 0.7)
         self.http = Http(self.store, cfg["network"], overrides)
         self.poster = NullPoster()
+        self.kb = KnowledgeBase(cfg.get("kb") or {}, [
+            name for c in (cfg["finance"].get("companies") or {}).values()
+            for name in (c.get("name"), *(c.get("aliases") or [])) if name])
         self.vulns = VulnEngine(self)
+        self.intel = Intel(cfg, self.kb, self.vulns.watch_re)
+        self.digest = DigestRunner(self)
         self.stories = StoryEngine(self)
         self.market = MarketCalendar()
         self.finance = FinanceEngine(self)
@@ -52,6 +60,7 @@ class App:
     async def start(self) -> None:
         await self.store.open()
         await self.http.start()
+        await asyncio.to_thread(self.kb.load)
         await self.stories.load()
         await self.finance.load()
 
@@ -85,6 +94,48 @@ class App:
         for i, src in enumerate(self.sources):
             self.tasks.append(asyncio.create_task(self._run_source(src, i * 3.0), name=f"source:{src.id}"))
         self.tasks.append(asyncio.create_task(self._flush_loop(), name="flush"))
+        self.tasks.append(asyncio.create_task(self._kb_loop(), name="kb"))
+        if (self.cfg.get("digest") or {}).get("enabled"):
+            self.tasks.append(asyncio.create_task(self.digest.loop(), name="digest"))
+
+    async def intel_mentions(self, entities: list, days: int, limit: int = 8) -> list[dict]:
+        wanted = {e.id for e in entities}
+        now = time.time()
+        stories = await self.store.stories_between(now - days * 86400, now + 1)
+        vulns = await self.store.vulns_recent(now - days * 86400)
+
+        def scan() -> list[dict]:
+            out = []
+            for row in reversed(stories):
+                d = row["data"]
+                if any(m.entity.id in wanted for m in self.kb.find(f"{d['title']}. {d.get('summary') or ''}")):
+                    out.append({"title": d["title"], "url": d["url"], "source": d["source"]})
+                    if len(out) >= limit:
+                        return out
+            for vid, d in sorted(vulns, reverse=True):
+                text = f"{d.get('title') or ''}. {d.get('description') or ''}"
+                if any(m.entity.id in wanted for m in self.kb.find(text)):
+                    refs = d.get("refs") or {}
+                    out.append({"title": f"{vid} {d.get('title') or ''}".strip(),
+                                "url": refs.get("NVD") or next(iter(refs.values()), None), "source": "CVE record"})
+                    if len(out) >= limit:
+                        break
+            return out
+
+        return await asyncio.to_thread(scan)
+
+    async def _kb_loop(self) -> None:
+        while True:
+            try:
+                status = await self.kb.refresh(self.http)
+                changed = {k: v for k, v in status.items() if v not in ("fresh", "unchanged")}
+                if changed:
+                    log.info("knowledge base: %s (%s)", changed, self.kb.counts())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("knowledge base refresh error")
+            await asyncio.sleep(6 * 3600)
 
     async def _run_source(self, src, initial_delay: float) -> None:
         await asyncio.sleep(initial_delay)
@@ -135,6 +186,16 @@ class App:
     async def _notify(self, text: str) -> None:
         await self.poster.send("log", content=text, fallback=False)
 
+    async def flush_kbs(self) -> None:
+        for row in await self.store.ms_kbs_dirty():
+            data = row["data"]
+            result = await self.poster.edit(row["channel_id"], row["message_id"], render.kb_embed(data),
+                                            file=(msrc.tsv_name(row["kb"]), msrc.kb_tsv(data)))
+            if result == "gone":
+                await self.store.ms_kb_set_post(row["kb"], 1, None, None)
+            elif result == "ok":
+                await self.store.ms_kb_mark_dirty(row["kb"], 0)
+
     async def _flush_loop(self) -> None:
         last_prune = 0.0
         while True:
@@ -159,6 +220,7 @@ class App:
                         await self.store.story_update(row["id"], dirty=0, clear_message=True)
                     elif result == "ok":
                         await self.store.story_update(row["id"], dirty=0)
+                await self.flush_kbs()
                 if time.time() - last_prune > 86400:
                     await self.store.prune()
                     last_prune = time.time()
@@ -181,8 +243,18 @@ async def run_check(cfg: dict) -> int:
             except Exception as exc:
                 return src.id, "FAIL", f"{type(exc).__name__}: {exc}"[:110], time.monotonic() - started
 
+        async def reference():
+            started = time.monotonic()
+            status = await app.kb.refresh(app.http)
+            failed = app.kb.failed()
+            counts = app.kb.counts()
+            detail = "; ".join(failed)[:110] if failed else \
+                f"{counts['actor']} actors, {counts['malware']} malware, {counts['vendor']} vendors, "                 f"{counts['product']} products ({', '.join(f'{k} {v}' for k, v in sorted(status.items()))})"[:110]
+            return "kb (reference data)", "FAIL" if failed else "OK  ", detail, time.monotonic() - started
+
         try:
             results = await asyncio.gather(*(one(s) for s in app.sources))
+            results.append(await reference())
         finally:
             await app.close()
 

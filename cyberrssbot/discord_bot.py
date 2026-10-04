@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -8,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 
-from . import render
+from . import msrc, render
 
 log = logging.getLogger("cyberrssbot.discord")
 
@@ -20,6 +21,7 @@ class Poster:
         self.channels = {k: int(v or 0) for k, v in (dc.get("channels") or {}).items()}
         self.gap = float(dc.get("post_gap_seconds", 1.5))
         self.kev_role = int(dc.get("kev_ping_role_id") or 0)
+        self.microsoft_role = int(dc.get("microsoft_ping_role_id") or 0)
         self.lock = asyncio.Lock()
         self._warned: set[str] = set()
 
@@ -42,7 +44,16 @@ class Poster:
             return None
         return await self._get(channel_id)
 
-    async def send(self, key: str, *, embed=None, content=None, ping_kev=False, fallback=True):
+    def role_exists(self, role_id: int) -> bool:
+        return any(guild.get_role(role_id) for guild in self.client.guilds)
+
+    def check_roles(self) -> None:
+        if self.microsoft_role and not self.role_exists(self.microsoft_role):
+            log.warning("microsoft_ping_role_id %s doesn't match a role in any server the bot is in — "
+                        "Microsoft update cards will be posted without a ping", self.microsoft_role)
+
+    async def send(self, key: str, *, embed=None, content=None, ping_kev=False, fallback=True,
+                   ping_microsoft=False, file: tuple[str, bytes] | None = None):
         await self.client.wait_until_ready()
         channel = await self._resolve(key, fallback)
         if channel is None:
@@ -51,22 +62,27 @@ class Poster:
         if ping_kev and self.kev_role:
             content = f"<@&{self.kev_role}> {content or ''}".strip()
             mentions = discord.AllowedMentions(roles=[discord.Object(id=self.kev_role)])
+        if ping_microsoft and self.microsoft_role and self.role_exists(self.microsoft_role):
+            content = f"<@&{self.microsoft_role}> {content or ''}".strip()
+            mentions = discord.AllowedMentions(roles=[discord.Object(id=self.microsoft_role)])
+        attachment = discord.File(io.BytesIO(file[1]), filename=file[0]) if file else None
         async with self.lock:
             try:
-                msg = await channel.send(content=content, embed=embed, allowed_mentions=mentions)
+                msg = await channel.send(content=content, embed=embed, allowed_mentions=mentions, file=attachment)
             except discord.HTTPException as exc:
                 log.error("posting to '%s' failed: %s", key, exc)
                 return None
             await asyncio.sleep(self.gap)
         return msg
 
-    async def edit(self, channel_id: int, message_id: int, embed) -> str:
+    async def edit(self, channel_id: int, message_id: int, embed, *, file: tuple[str, bytes] | None = None) -> str:
         channel = await self._get(channel_id)
         if channel is None:
             return "gone"
+        extra = {"attachments": [discord.File(io.BytesIO(file[1]), filename=file[0])]} if file else {}
         async with self.lock:
             try:
-                await channel.get_partial_message(message_id).edit(embed=embed)
+                await channel.get_partial_message(message_id).edit(embed=embed, **extra)
             except discord.NotFound:
                 return "gone"
             except discord.HTTPException as exc:
@@ -113,6 +129,50 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         src.wake.set()
         await interaction.response.send_message(f"Polling `{source}` now — check `/status` in a minute.",
                                                 ephemeral=True)
+
+    @tree.command(name="kb", description="Show the stored card for a tracked Windows security update")
+    @app_commands.describe(number="e.g. 5124008 or KB5124008")
+    async def kb(interaction: discord.Interaction, number: str):
+        kb_id = msrc.normalize_kb(number)
+        row = await app.store.ms_kb_get(kb_id) if kb_id else None
+        if not row:
+            await interaction.response.send_message(f"`{number}` isn't a tracked Windows security update.",
+                                                    ephemeral=True)
+            return
+        data = row["data"]
+        attachment = discord.File(io.BytesIO(msrc.kb_tsv(data)), filename=msrc.tsv_name(kb_id))
+        await interaction.response.send_message(embed=render.kb_embed(data), file=attachment, ephemeral=True)
+
+    @tree.command(name="digest", description="Build an intelligence digest for the last N hours")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(mode="now: build a digest ending at this minute",
+                           hours="Length of the window in hours (default 6)",
+                           post="Post it to the digest channel instead of previewing it privately")
+    @app_commands.choices(mode=[app_commands.Choice(name="now", value="now")])
+    async def digest(interaction: discord.Interaction, mode: str = "now",
+                     hours: app_commands.Range[int, 1, 168] = 6, post: bool = False):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        built = await app.digest.build(float(hours), datetime.now(timezone.utc), "on-demand")
+        if post:
+            posted = await app.digest.post(built)
+            note = f"Posted {posted} of {len(built.messages)} messages for run `{built.run_id}`." if posted else \
+                f"Nothing was posted: no `{app.digest.channel}` channel is configured."
+            await interaction.followup.send(note, ephemeral=True)
+            return
+        for index, message in enumerate(built.messages[:10]):
+            await interaction.followup.send(embed=render.digest_embed(built, message, index), ephemeral=True)
+
+    @tree.command(name="entity", description="What the knowledge base knows about an actor, malware family or vendor")
+    @app_commands.describe(name="e.g. APT29, Storm-2603, LockBit, Cobalt Strike")
+    async def entity(interaction: discord.Interaction, name: str):
+        found = app.kb.lookup(name)
+        if not found:
+            await interaction.response.send_message(f"`{name}` isn't in the knowledge base.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        days = int(app.cfg["digest"].get("entity_lookback_days", 14))
+        mentions = await app.intel_mentions(found, days)
+        await interaction.followup.send(embed=render.entity_embed(found, mentions, days), ephemeral=True)
 
     async def ticker_autocomplete(interaction: discord.Interaction, current: str):
         cur = current.strip().lower()
@@ -171,6 +231,7 @@ class CyberRSSBotClient(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("logged in as %s — %d sources scheduled", self.user, len(self.app.sources))
+        self.app.poster.check_roles()
 
     async def close(self) -> None:
         await self.app.close()

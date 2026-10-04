@@ -1,0 +1,63 @@
+# Regulators and laws. Matching one adds the `policy-law` label.
+# kind: regulator | law. Short acronyms (SEC, ICO, FTC) only match in exactly this case.
+- {name: GDPR, kind: law, jurisdiction: EU, aliases: [General Data Protection Regulation]}
+- {name: NIS2, kind: law, jurisdiction: EU, aliases: [NIS 2, NIS2 Directive, NIS 2 Directive]}
+- {name: DORA, kind: law, jurisdiction: EU, aliases: [Digital Operational Resilience Act]}
+- {name: Cyber Resilience Act, kind: law, jurisdiction: EU, aliases: [CRA]}
+- {name: EU AI Act, kind: law, jurisdiction: EU, aliases: [AI Act, Artificial Intelligence Act]}
+- {name: Digital Services Act, kind: law, jurisdiction: EU, aliases: [DSA]}
+- {name: Digital Markets Act, kind: law, jurisdiction: EU, aliases: [DMA]}
+- {name: ePrivacy Directive, kind: law, jurisdiction: EU}
+- {name: CCPA, kind: law, jurisdiction: US-CA, aliases: [California Consumer Privacy Act, CPRA, California Privacy Rights Act]}
+- {name: HIPAA, kind: law, jurisdiction: US, aliases: [Health Insurance Portability and Accountability Act]}
+- {name: CIRCIA, kind: law, jurisdiction: US, aliases: [Cyber Incident Reporting for Critical Infrastructure Act]}
+- {name: FISMA, kind: law, jurisdiction: US, aliases: [Federal Information Security Modernization Act]}
+- {name: GLBA, kind: law, jurisdiction: US, aliases: [Gramm-Leach-Bliley Act]}
+- {name: COPPA, kind: law, jurisdiction: US, aliases: [Children's Online Privacy Protection Act]}
+- {name: CFAA, kind: law, jurisdiction: US, aliases: [Computer Fraud and Abuse Act]}
+- {name: PCI DSS, kind: law, jurisdiction: global, aliases: [PCI-DSS, Payment Card Industry Data Security Standard]}
+- {name: DPDP Act, kind: law, jurisdiction: IN, aliases: [DPDPA, Digital Personal Data Protection Act, DPDP Rules]}
+- {name: IT Act, kind: law, jurisdiction: IN, aliases: [Information Technology Act]}
+- {name: UK GDPR, kind: law, jurisdiction: UK}
+- {name: Data Protection Act, kind: law, jurisdiction: UK, aliases: [Data Protection Act 2018]}
+- {name: Online Safety Act, kind: law, jurisdiction: UK}
+- {name: Cyber Security and Resilience Bill, kind: law, jurisdiction: UK}
+- {name: Computer Misuse Act, kind: law, jurisdiction: UK}
+- {name: PIPEDA, kind: law, jurisdiction: CA}
+- {name: LGPD, kind: law, jurisdiction: BR, aliases: [Lei Geral de Proteção de Dados]}
+- {name: PIPL, kind: law, jurisdiction: CN, aliases: [Personal Information Protection Law]}
+- {name: APPI, kind: law, jurisdiction: JP, aliases: [Act on the Protection of Personal Information]}
+- {name: POPIA, kind: law, jurisdiction: ZA, aliases: [Protection of Personal Information Act]}
+- {name: PDPA, kind: law, jurisdiction: SG, aliases: [Personal Data Protection Act]}
+
+- {name: SEC, kind: regulator, jurisdiction: US, aliases: [Securities and Exchange Commission, U.S. Securities and Exchange Commission]}
+- {name: FTC, kind: regulator, jurisdiction: US, aliases: [Federal Trade Commission]}
+- {name: FCC, kind: regulator, jurisdiction: US, aliases: [Federal Communications Commission]}
+- {name: CFPB, kind: regulator, jurisdiction: US, aliases: [Consumer Financial Protection Bureau]}
+- {name: OFAC, kind: regulator, jurisdiction: US, aliases: [Office of Foreign Assets Control]}
+- {name: HHS OCR, kind: regulator, jurisdiction: US, aliases: [Office for Civil Rights, HHS Office for Civil Rights]}
+- {name: NYDFS, kind: regulator, jurisdiction: US-NY, aliases: [New York Department of Financial Services]}
+- {name: FINRA, kind: regulator, jurisdiction: US}
+- {name: CPPA, kind: regulator, jurisdiction: US-CA, aliases: [California Privacy Protection Agency]}
+- {name: ICO, kind: regulator, jurisdiction: UK, aliases: [Information Commissioner's Office, Information Commissioner’s Office]}
+- {name: FCA, kind: regulator, jurisdiction: UK, aliases: [Financial Conduct Authority]}
+- {name: Ofcom, kind: regulator, jurisdiction: UK}
+- {name: CNIL, kind: regulator, jurisdiction: FR, aliases: [Commission Nationale de l'Informatique et des Libertés]}
+- {name: EDPB, kind: regulator, jurisdiction: EU, aliases: [European Data Protection Board]}
+- {name: EDPS, kind: regulator, jurisdiction: EU, aliases: [European Data Protection Supervisor]}
+- {name: European Commission, kind: regulator, jurisdiction: EU}
+- {name: Irish DPC, kind: regulator, jurisdiction: IE, aliases: [Data Protection Commission, Irish Data Protection Commission, DPC]}
+- {name: Garante, kind: regulator, jurisdiction: IT, aliases: [Garante per la protezione dei dati personali]}
+- {name: AEPD, kind: regulator, jurisdiction: ES, aliases: [Agencia Española de Protección de Datos]}
+- {name: BfDI, kind: regulator, jurisdiction: DE}
+- {name: Dutch DPA, kind: regulator, jurisdiction: NL, aliases: [Autoriteit Persoonsgegevens]}
+- {name: OAIC, kind: regulator, jurisdiction: AU, aliases: [Office of the Australian Information Commissioner]}
+- {name: PDPC, kind: regulator, jurisdiction: SG, aliases: [Personal Data Protection Commission]}
+- {name: CAC, kind: regulator, jurisdiction: CN, aliases: [Cyberspace Administration of China]}
+- {name: MeitY, kind: regulator, jurisdiction: IN, aliases: [Ministry of Electronics and Information Technology]}
+- {name: CERT-In, kind: regulator, jurisdiction: IN, aliases: [Indian Computer Emergency Response Team]}
+- {name: RBI, kind: regulator, jurisdiction: IN, aliases: [Reserve Bank of India]}
+- {name: SEBI, kind: regulator, jurisdiction: IN, aliases: [Securities and Exchange Board of India]}
+- {name: Data Protection Board of India, kind: regulator, jurisdiction: IN}
+- {name: ANPD, kind: regulator, jurisdiction: BR}
+- {name: OPC, kind: regulator, jurisdiction: CA, aliases: [Office of the Privacy Commissioner of Canada]}

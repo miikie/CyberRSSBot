@@ -1,6 +1,6 @@
 # CyberRSSBot
 
-A Discord bot that aggregates cybersecurity news, advisories, threat research and vulnerability intelligence from 51 sources, tracks publicly traded cybersecurity companies, routes everything to topic channels and makes sure every event shows up **once**.
+A Discord bot that aggregates cybersecurity news, advisories, threat research and vulnerability intelligence from 54 sources, tracks publicly traded cybersecurity companies, routes everything to topic channels and makes sure every event shows up **once**.
 
 Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merged into a single card per CVE that is edited in place as new information arrives. News stories covered by several outlets are posted once, with the other outlets listed under it.
 
@@ -11,6 +11,8 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - [Features](#features)
 - [Channels](#channels)
 - [Sources](#sources)
+- [Microsoft security updates](#microsoft-security-updates)
+- [Intelligence digest](#intelligence-digest)
 - [Cyber-financials](#cyber-financials)
 - [How deduplication works](#how-deduplication-works)
 - [Rate limiting](#rate-limiting)
@@ -30,6 +32,8 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Polite fetching.** Per-host pacing, ETag / Last-Modified conditional requests, `Retry-After` support and exponential backoff per source.
 - **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel.
 - **Scraper for feedless sites.** Any page can become a source with a CSS selector.
+- **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
+- **Deterministic digests.** Scheduled summaries built by rules from public reference data, with a coverage section that says what was and wasn't checked.
 - **Cyber-financials.** SEC filings, press releases, a daily close summary, big-move alerts and an earnings calendar for a watchlist of security stocks.
 
 ## Channels
@@ -46,7 +50,9 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 | Ransomware | Ransomware leak-site victim postings |
 | Malware | Malware analysis, sandbox and traffic research |
 | Finance | SEC filings, press releases, move alerts, the daily close summary and earnings posts |
-| Bot log | Source failure and recovery notices |
+| Microsoft | One card per Windows security update (KB), revision notes and the monthly Patch Tuesday summary |
+| Digest | Scheduled intelligence digests |
+| Bot log | Source failure and recovery notices, digest run summaries |
 
 ## Sources
 
@@ -61,6 +67,66 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 | Ransomware | ransomware.live |
 | Malware | ANY.RUN, Malware Traffic Analysis, Malpedia, Malwarebytes Labs |
 | Finance | SEC EDGAR, Finnhub, Cloudflare and Gen Digital investor relations, GlobeNewswire, Business Wire |
+| Microsoft | MSRC CVRF release documents, Windows release information on Microsoft Learn |
+| Law enforcement | US Department of Justice, Europol |
+| Reference data | MITRE ATT&CK, MISP galaxy, CISA KEV |
+
+## Microsoft security updates
+
+The Microsoft channel follows Windows security updates through the [MSRC CVRF API](https://api.msrc.microsoft.com/cvrf/v3.0/updates). Each monthly release document is turned into an index of KBs, and every KB that applies to a tracked product gets one card.
+
+### What gets posted
+
+| Post | When |
+|---|---|
+| **Update card** | Once per KB, when it first appears in a release document. Patch Tuesday updates, out-of-band updates and servicing stack updates all get one |
+| **Revision note** | When Microsoft revises a release and a posted KB changes: one line such as *KB5124008 revised: 3 CVEs added, CVE-2026-12345 now marked exploited*, linking to the original card |
+| **Patch Tuesday summary** | Once per monthly release, after its cards |
+
+A card is titled *Windows Security update · KB5124008* and links to the KB's support page. It shows the Windows versions covered, the OS builds, the release date and type (Patch Tuesday, out-of-band or servicing stack update), and how many CVEs, components, Critical fixes, exploited and publicly disclosed vulnerabilities the update contains. Exploited and publicly disclosed CVEs are listed by name.
+
+Every card carries an attachment, `KB<number>-security-fixes.tsv`, with one row per CVE: CVE, title, component, severity, impact, CVSS, exploited, publicly disclosed, affected products and fixed build.
+
+Cards are never reposted. When a release is revised the card is edited in place and its attachment is replaced. The summary gives the number of CVEs fixed by the tracked updates, the Critical count, the exploited zero-days with links, and links to the month's cards.
+
+### Scope and schedule
+
+Only products on an allowlist are tracked: by default Windows 11, Windows 10 and Windows Server 2019, 2022 and 2025. A product is matched by the start of its name, so .NET Framework and Office updates stay out unless they are added. September 2026 produced ten cards.
+
+The release index is checked every 3 hours, and every 30 minutes on Patch Tuesday and the day after. A monthly document is downloaded again only when its release date changes. OS builds and fixed CVEs come from MSRC; release dates and types come from the Windows release information pages on Microsoft Learn. As with every other source, the first run records the existing updates without posting them.
+
+### Links to CVE cards
+
+When a CVE that already has a card is fixed by a tracked KB, a *Fixed in KB…* link is added to that card. The tracker does not create CVE cards of its own, and an exploited CVE is still escalated only when it is added to CISA KEV. An optional role can be mentioned on each new update card.
+
+## Intelligence digest
+
+A rule-based digest that summarises what the bot collected over a time window. It uses no language model and no paid service: entities come from public reference lists, topics and scores from fixed rules, and the same inputs always produce the same text.
+
+### What a digest contains
+
+Each digest covers one window, for example the last 6 hours, and shows the window and a run id. Sections appear in a fixed order: Exploited in the wild, Vulnerabilities & patches, Breaches & ransomware, Threat actors, Malware, Supply chain, Law enforcement, Policy & law and Markets. Each section lists its top items by signal score.
+
+An item is a cleaned headline linking to the source, one sentence quoted from the source's own feed summary with the extracted names and figures in bold, the outlet it came from, and links to other outlets that covered the same story. At most one sentence of about 40 words is quoted per source, always attributed and linked. Items are referenced, not reposted: the original post stays in its own channel.
+
+Structured data gets short generated paragraphs: additions to CISA KEV, Windows update statistics from the Microsoft tracker, and the biggest movers on the stock watchlist.
+
+Every digest ends with a **Coverage & limitations** section built from the run itself: how many sources were checked and which failed and why, how many raw items became how many clustered stories, and how many were dated outside the window. Sections with nothing to show are listed there as "no qualifying items from checked sources" rather than implying that nothing happened. Long digests are split across messages at section boundaries, never in the middle of an item. A run summary goes to the log channel.
+
+### How items are understood
+
+| Step | What it does |
+|---|---|
+| **Knowledge base** | MITRE ATT&CK groups and software, MISP galaxy threat actors and the CISA KEV vendor and product list, refreshed weekly and cached on disk, plus hand-maintained lists of ransomware groups, regulators and laws, and countries. Aliases resolve to one entity: NOBELIUM and Dark Halo are APT29 |
+| **Extraction** | Threat actors, malware, vendors, products, regulators, countries, CVE ids, money amounts, victim, record and device counts, and action verbs such as arrested, indicted, exploited, breached, patched, fined and acquired |
+| **Labels** | exploited, vulnerability, ransomware, breach, apt, malware, supply-chain, policy-law, law-enforcement, finance. An item can carry several |
+| **Score** | Outlets covering the story, KEV status, CVSS, watchlist vendors, named actors or malware, extracted figures and first-hand sources all add to it; it decays with age |
+
+Matching is word-based and case-aware. Names that are also ordinary words, such as Play, Royal or Progress, only match in the right case and context, so "Play ransomware gang" is the group and "Google Play Store" is not.
+
+Labels can also route new posts to dedicated channels such as an APT tracker or a supply-chain channel. Routing is off by default and an item is still posted once.
+
+DOJ and Europol press releases are followed as law-enforcement sources, filtered to cyber-related items.
 
 ## Cyber-financials
 
@@ -113,7 +179,10 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 |---|---|
 | `/status` | Health of every source: last success, item count and last error |
 | `/cve <id>` | The merged card for any tracked CVE or GHSA id |
+| `/kb <number>` | The stored card and CVE list for a tracked Windows security update |
 | `/poll <source>` | Poll a source immediately (moderators only) |
+| `/digest now [hours] [post]` | Build a digest for the last N hours as a private preview, or post it (moderators only) |
+| `/entity <name>` | What the knowledge base knows about an actor, malware family or vendor, and recent items mentioning it |
 | `/stock <ticker>` | Latest quote and the last 5 finance items for a watchlist ticker |
 | `/earnings` | Upcoming watchlist earnings over the next 14 days |
 
@@ -128,11 +197,16 @@ cyberrssbot/
 ├── cyberrssbot/
 │   ├── __main__.py      command line entry point
 │   ├── app.py           wiring, scheduler, flush loop, health check
+│   ├── classify.py      topic labels, signal score, label routing
 │   ├── config.py        config loading and defaults
+│   ├── digest.py        digest builder, scheduler and message splitting
 │   ├── discord_bot.py   client, poster, slash commands
 │   ├── engine.py        VulnEngine (merge, post, edit) and StoryEngine (clustering)
+│   ├── extract.py       entity, money, count and action-verb extraction
 │   ├── finance.py       watchlist, filing decoding, event classification, FinanceEngine
+│   ├── kb.py            knowledge base: ATT&CK, MISP, KEV and manual gazetteers
 │   ├── market.py        NYSE trading calendar
+│   ├── msrc.py          MSRC CVRF parsing, KB index, revision diff, TSV export
 │   ├── dedup.py         URL canonicalization, title fingerprints, story index
 │   ├── http.py          per-host pacing, conditional GET, retries
 │   ├── render.py        Discord embeds
@@ -142,7 +216,9 @@ cyberrssbot/
 │       ├── base.py      source base class
 │       ├── feeds.py     RSS / Atom and scrape sources
 │       ├── finance.py   SEC EDGAR, quotes, earnings and company news sources
+│       ├── msrc.py      Windows security update tracker
 │       └── vulns.py     NVD, KEV, GHSA and EPSS sources
+├── kb/                  manual lists: actors, ransomware groups, regulators, countries
 ├── config.example.yaml
 ├── .env.example
 └── requirements.txt

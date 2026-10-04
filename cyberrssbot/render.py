@@ -4,6 +4,7 @@ from datetime import date
 
 import discord
 
+from . import msrc
 from .util import parse_time, primary_id, truncate
 
 SEVERITY_COLOR = {"CRITICAL": 0xB71C1C, "HIGH": 0xE65100, "MEDIUM": 0xF9A825, "LOW": 0x1565C0}
@@ -125,6 +126,134 @@ def story_embed(d: dict) -> discord.Embed:
     published = parse_time(d.get("published"))
     if published:
         embed.timestamp = published
+    return embed
+
+
+MS_COLOR = 0x0078D4
+
+
+def _cve_lines(cves: list[tuple[str, str]]) -> str:
+    return _join_limit([f"[{cve}]({msrc.cve_url(cve)}) — {truncate(title, 110)}" for cve, title in cves], "\n")
+
+
+def kb_embed(d: dict) -> discord.Embed:
+    counts = msrc.kb_counts(d)
+    release = d.get("release") or {}
+    builds = [msrc.short_build(b) for b in d.get("builds") or []]
+    if counts["exploited"]:
+        color = KEV_COLOR
+    elif counts["critical"]:
+        color = SEVERITY_COLOR["HIGH"]
+    else:
+        color = MS_COLOR
+    embed = discord.Embed(title=f"Windows Security update · KB{d['kb']}", url=msrc.kb_url(d["kb"]), color=color)
+    embed.add_field(name="Versions covered", value=_join_limit(d.get("versions") or [], "\n") or "—", inline=False)
+    embed.add_field(name="OS build" if len(builds) == 1 else "OS builds", value=_join_limit(builds, ", ") or "—")
+    embed.add_field(name="Release date", value=release.get("date") or "Not listed yet")
+    embed.add_field(name="Release type", value=msrc.release_label(release.get("type"), d.get("subtype")))
+    embed.add_field(
+        name="Fixes",
+        value=(f"**{counts['cves']}** CVE{'' if counts['cves'] == 1 else 's'} · {counts['components']} "
+               f"component{'' if counts['components'] == 1 else 's'} · {counts['critical']} Critical · "
+               f"{counts['exploited']} exploited · {counts['disclosed']} publicly disclosed"),
+        inline=False)
+    exploited = sorted((cve, c["title"]) for cve, c in d["cves"].items() if c["exploited"])
+    disclosed = sorted((cve, c["title"]) for cve, c in d["cves"].items() if c["disclosed"])
+    if exploited:
+        embed.add_field(name="🚨 Exploited", value=_cve_lines(exploited), inline=False)
+    if disclosed:
+        embed.add_field(name="Publicly disclosed", value=_cve_lines(disclosed), inline=False)
+    if d.get("supersedes"):
+        embed.set_footer(text="Replaces " + ", ".join(f"KB{kb}" for kb in d["supersedes"][:4]))
+    published = parse_time(release.get("date"))
+    if published:
+        embed.timestamp = published
+    return embed
+
+
+def patch_summary_embed(doc_id: str, doc: dict, cards: list[tuple[dict, str | None]]) -> discord.Embed:
+    month = msrc.doc_month(doc_id)
+    cves: dict[str, dict] = {}
+    for data, _ in cards:
+        for cve, c in data["cves"].items():
+            known = cves.get(cve)
+            if known is None or msrc.SEVERITY_RANK.get(c["severity"], 0) > msrc.SEVERITY_RANK.get(known["severity"], 0):
+                cves[cve] = c
+    critical = sum(1 for c in cves.values() if c["severity"] == "Critical")
+    embed = discord.Embed(
+        title=truncate(f"Patch Tuesday summary · {month:%B %Y}" if month else f"Patch Tuesday summary · {doc_id}", 256),
+        url=msrc.doc_url(doc_id),
+        description=truncate(doc.get("title"), 300),
+        color=KEV_COLOR if doc.get("exploited") else MS_COLOR,
+    )
+    embed.add_field(name="Totals", value=(f"**{len(cves)}** CVEs fixed by the tracked Windows updates · "
+                                          f"{doc.get('total') or 0} entries in the full release"), inline=False)
+    embed.add_field(name="Critical", value=str(critical))
+    embed.add_field(name="Exploited", value=str(len(doc.get("exploited") or [])))
+    embed.add_field(name="Publicly disclosed", value=str(len(doc.get("disclosed") or [])))
+    zero_days = [(e["cve"], e["title"]) for e in doc.get("exploited") or []]
+    embed.add_field(name="🚨 Exploited zero-days", value=_cve_lines(zero_days) if zero_days else "None reported",
+                    inline=False)
+    lines = []
+    for data, jump in cards:
+        label = f"[KB{data['kb']}]({jump})" if jump else f"KB{data['kb']}"
+        lines.append(f"{label} — {truncate(', '.join(data.get('versions') or []), 120)}")
+    embed.add_field(name=f"Update cards ({len(cards)})", value=_join_limit(lines, "\n") or "—", inline=False)
+    return embed
+
+
+DIGEST_COLOR = 0x37474F
+ENTITY_KINDS = {"group": "Threat actor", "ransomware": "Ransomware group", "malware": "Malware", "tool": "Tool",
+                "vendor": "Vendor", "product": "Product", "regulator": "Regulator", "law": "Law",
+                "country": "Country"}
+ENTITY_SOURCES = {"attack": "MITRE ATT&CK", "misp": "MISP galaxy", "kev": "CISA KEV", "manual": "manual list",
+                  "watchlist": "finance watchlist"}
+
+
+def digest_embed(digest, message: str, index: int) -> discord.Embed:
+    embed = discord.Embed(description=message, color=DIGEST_COLOR)
+    if index == 0:
+        embed.title = truncate(f"Security digest · {digest.edition} edition", 256)
+    embed.set_footer(text=truncate(
+        f"Window: {digest.window()} · Run {digest.run_id} · {index + 1}/{len(digest.messages)}", 2048))
+    return embed
+
+
+def digest_summary_embed(digest, posted: int) -> discord.Embed:
+    stats = digest.stats
+    embed = discord.Embed(title=truncate(f"Digest run {digest.run_id}", 256), color=DIGEST_COLOR)
+    embed.add_field(name="Window", value=digest.window(), inline=False)
+    embed.add_field(name="Messages posted", value=f"{posted} of {len(digest.messages)}")
+    embed.add_field(name="Items shown", value=str(stats.get("items", 0)))
+    embed.add_field(name="Sources checked", value=f"{stats.get('checked', 0)} of {stats.get('sources', 0)}")
+    failed = stats.get("failed") or []
+    errors = [f"`{f['id']}`: {truncate(str(f.get('error') or 'unknown error'), 80)}" for f in failed]
+    embed.add_field(name=f"Source errors ({len(failed)})", value=_join_limit(errors, "\n") or "None", inline=False)
+    embed.add_field(
+        name="Suppressed items",
+        value=(f"{stats.get('excluded', 0)} dated outside the window · {stats.get('unclassified', 0)} matched no "
+               f"section · {stats.get('below_cut', 0)} below the cut"),
+        inline=False)
+    return embed
+
+
+def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Embed:
+    first = entities[0]
+    embed = discord.Embed(title=truncate(first.name, 256), url=first.meta.get("url"), color=DIGEST_COLOR)
+    for entity in entities[:4]:
+        lines = [f"{ENTITY_KINDS.get(entity.kind, entity.kind)} · {ENTITY_SOURCES.get(entity.source, entity.source)}"
+                 + (f" · `{entity.id}`" if entity.source == "attack" else "")]
+        if entity.meta.get("vendor"):
+            lines.append(f"Vendor: {entity.meta['vendor']}")
+        if entity.meta.get("jurisdiction"):
+            lines.append(f"Jurisdiction: {entity.meta['jurisdiction']}")
+        if entity.aliases:
+            lines.append("Also known as: " + _join_limit(entity.aliases, ", ", 800))
+        embed.add_field(name=truncate(f"{entity.name} ({entity.type})", 256), value="\n".join(lines), inline=False)
+    lines = [f"• [{truncate(m['title'], 90)}]({m['url']}) — {m['source']}" if m.get("url")
+             else f"• {truncate(m['title'], 90)} — {m['source']}" for m in mentions]
+    embed.add_field(name=f"Recent items (last {days} days)",
+                    value=_join_limit(lines, "\n") or "No items mention it.", inline=False)
     return embed
 
 

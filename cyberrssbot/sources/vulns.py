@@ -138,6 +138,7 @@ class KEVSource(Source):
         if fetched is None:
             return 0
         data = json.loads(fetched.body)
+        app.kb.update_kev(data.get("vulnerabilities") or [])
         count = 0
         for v in data.get("vulnerabilities") or []:
             cve = (v.get("cveID") or "").upper()

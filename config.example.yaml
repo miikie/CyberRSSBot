@@ -14,8 +14,20 @@ discord:
     ransomware: 0
     malware: 0
     finance: 0
+    # Windows security update cards (msrc_cvrf source). 0 falls back to `default`.
+    microsoft: 0
+    # Scheduled intelligence digests (see `digest:` below). 0 = digests are built but not posted.
+    digest: 0
+    # Optional extra channels for label routing (see `routing:` below). Only used by an enabled route.
+    apt-tracker: 0
+    malware-radar: 0
+    supply-chain: 0
+    data-privacy-laws: 0
     log: 0
   kev_ping_role_id: 0
+  # Role mentioned on each new Windows update card. 0 = no ping. Checked at startup;
+  # a role that doesn't exist is logged as a warning and never mentioned.
+  microsoft_ping_role_id: 0
   post_gap_seconds: 1.5
 
 poll:
@@ -86,6 +98,91 @@ finance:
     HACK: Amplify Cybersecurity ETF
     BUG: Global X Cybersecurity ETF
 
+# Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors and the
+# CISA KEV vendor/product list, plus the manual lists in `extras_dir`.
+kb:
+  # Where the downloaded gazetteers are cached. The bot works offline from this cache if a refresh fails.
+  cache_dir: kb_cache
+  # Folder with the manual lists: actors.yaml, ransomware.yaml, regulators.yaml, countries.yaml, and
+  # common_words.txt (names that are also ordinary words and so need exact case plus a cue word).
+  extras_dir: kb
+  # Days between downloads of ATT&CK and the MISP actor list.
+  refresh_days: 7
+  # false = use ATT&CK only for threat actors.
+  use_misp: true
+
+# Label routing. Each key is a channel under discord.channels; a new story or CVE carrying one of the labels
+# is posted there instead of its source's usual channel (first matching route wins, so an item is still
+# posted exactly once). Labels: exploited, vulnerability, ransomware, breach, apt, malware, supply-chain,
+# policy-law, law-enforcement, finance. KEV posts and finance posts are never rerouted.
+routing:
+  apt-tracker:       {labels: [apt], enabled: false}
+  malware-radar:     {labels: [malware], enabled: false}
+  supply-chain:      {labels: [supply-chain], enabled: false}
+  data-privacy-laws: {labels: [policy-law], enabled: false}
+
+digest:
+  # true = post the scheduled editions below to the `channel`. /digest works either way.
+  enabled: false
+  # Key under discord.channels that digests are posted to.
+  channel: digest
+  # Editions. Each one is built at the listed UTC times and covers the `hours` before that time.
+  editions:
+    - {name: 6h, hours: 6, at_utc: ["00:00", "06:00", "12:00", "18:00"]}
+    - {name: daily, hours: 24, at_utc: ["06:00"]}
+  # A scheduled edition missed by more than this many minutes (bot was down) is skipped, not posted late.
+  catch_up_minutes: 90
+  # Post an edition even when no section has items (it then only carries the coverage section).
+  post_empty: true
+  # Items shown per section. A section can override it with `top:`.
+  top_n: 5
+  # Items scoring below this are left out.
+  min_score: 0
+  # Longest quoted sentence, in words. One sentence per item, always attributed and linked.
+  max_words: 40
+  # An item first seen in the window is dropped if its publication date is more than this many hours
+  # before the window start, or after the window end.
+  late_grace_hours: 6
+  # Messages are split at section boundaries to stay under this size (Discord's embed limit is 4096).
+  max_message_chars: 3800
+  # How far back /entity looks for items mentioning an entity.
+  entity_lookback_days: 14
+  # Sections in display order. `labels` are the topic labels a section collects. Empty sections are
+  # left out and listed under "Coverage & limitations".
+  sections:
+    - {key: exploited,       title: Exploited in the wild,     labels: [exploited]}
+    - {key: vulnerabilities, title: Vulnerabilities & patches, labels: [vulnerability]}
+    - {key: breaches,        title: Breaches & ransomware,     labels: [breach, ransomware]}
+    - {key: actors,          title: Threat actors,             labels: [apt]}
+    - {key: malware,         title: Malware,                   labels: [malware]}
+    - {key: supply-chain,    title: Supply chain,              labels: [supply-chain]}
+    - {key: law-enforcement, title: Law enforcement,           labels: [law-enforcement]}
+    - {key: policy,          title: Policy & law,              labels: [policy-law]}
+    - {key: markets,         title: Markets,                   labels: [finance]}
+  # An item with several labels appears once, in the section of its highest-priority label.
+  label_priority: [exploited, law-enforcement, policy-law, supply-chain, apt, malware, ransomware, breach,
+                   vulnerability, finance]
+  # Signal score = (base + bonuses) x recency decay.
+  weights:
+    base: 1.0
+    # Per additional outlet covering the same story, up to outlet_cap outlets.
+    outlet: 1.0
+    outlet_cap: 5
+    # The CVE is in CISA KEV.
+    kev: 5.0
+    # Scaled by CVSS: a 10.0 adds the full weight.
+    cvss: 3.0
+    # Mentions a term on filters.vulns.watchlist.
+    watchlist: 1.5
+    # Names a known threat actor or malware family.
+    named: 1.5
+    # Contains a money amount or a victim / record / device count.
+    figures: 1.0
+    # Comes from a source marked `primary: true` (vendor, agency, CERT), or is a CVE record or SEC filing.
+    primary: 2.0
+    # The score halves every this many hours of age, measured from the end of the window. 0 = no decay.
+    half_life_hours: 24
+
 sources:
   - {id: cisa-kev, type: kev,  name: CISA KEV,      channel: kev,   interval: 1800}
   - {id: nvd,      type: nvd,  name: NVD,           channel: vulns, interval: 900, first_run_lookback_hours: 6}
@@ -99,21 +196,56 @@ sources:
     url: https://api.msrc.microsoft.com/update-guide/rss
     interval: 1800
 
-  - {id: cisa-advisories, name: CISA, channel: advisories, interval: 1800, enabled: false,
+  # Microsoft security updates: one card per Windows KB, with a TSV of the CVEs it fixes.
+  - id: msrc-kb
+    type: msrc_cvrf
+    name: Microsoft security updates
+    # Key under discord.channels that the cards, revision lines and Patch Tuesday summary go to.
+    channel: microsoft
+    # Seconds between polls of the MSRC updates index on a normal day (3 hours).
+    interval: 10800
+    # Seconds between polls on Patch Tuesday and the day after (US Pacific time).
+    patch_tuesday_interval: 1800
+    # How many of the newest monthly release documents to watch for new KBs and revisions.
+    months: 2
+    # Product allowlist. A KB gets a card only if it applies to a product whose MSRC name starts with
+    # one of these (case-insensitive). Add e.g. "Windows Server 2016" or "Microsoft Office 2016".
+    products:
+      - Windows 11
+      - Windows 10
+      - Windows Server 2019
+      - Windows Server 2022
+      - Windows Server 2025
+
+  - {id: cisa-advisories, primary: true, name: CISA, channel: advisories, interval: 1800, enabled: false,
      url: "https://www.cisa.gov/cybersecurity-advisories/all.xml"}
-  - {id: cert-eu, name: CERT-EU, channel: advisories, interval: 3600,
+  - {id: cert-eu, primary: true, name: CERT-EU, channel: advisories, interval: 3600,
      url: "https://cert.europa.eu/publications/security-advisories-rss"}
-  - {id: ncsc-uk, name: NCSC UK, channel: advisories, interval: 3600,
+  - {id: ncsc-uk, primary: true, name: NCSC UK, channel: advisories, interval: 3600,
      url: "https://www.ncsc.gov.uk/api/1/services/v1/all-rss-feed.xml"}
-  - {id: cccs, name: Canadian Centre for Cyber Security, channel: advisories, interval: 3600,
+  - {id: cccs, primary: true, name: Canadian Centre for Cyber Security, channel: advisories, interval: 3600,
      url: "https://www.cyber.gc.ca/api/cccs/rss/v1/get?feed=alerts_advisories&lang=en"}
 
-  - {id: cisco-psirt, name: Cisco PSIRT, channel: advisories, interval: 3600,
+  - {id: cisco-psirt, primary: true, name: Cisco PSIRT, channel: advisories, interval: 3600,
      url: "https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml"}
-  - {id: fortinet-psirt, name: Fortinet PSIRT, channel: advisories, interval: 3600,
+  - {id: fortinet-psirt, primary: true, name: Fortinet PSIRT, channel: advisories, interval: 3600,
      url: "https://filestore.fortinet.com/fortiguard/rss/ir.xml"}
-  - {id: paloalto-psirt, name: Palo Alto Networks, channel: advisories, interval: 3600,
+  - {id: paloalto-psirt, primary: true, name: Palo Alto Networks, channel: advisories, interval: 3600,
      url: "https://security.paloaltonetworks.com/rss.xml"}
+
+  # Law-enforcement press releases. `labels: [law-enforcement]` adds that topic label to every item from the source;
+  # `primary: true` marks a first-hand source for the digest score. DOJ, FBI and the NCA publish every
+  # press release in one feed, so include_keywords keeps only the cyber-related ones.
+  - {id: doj, name: US Department of Justice, channel: news, interval: 1800, primary: true, labels: [law-enforcement],
+     url: "https://www.justice.gov/news/rss?type=press_release&m=1",
+     include_keywords: &cyberwords ["cyber", "ransomware", "malware", "hack", "botnet", "darknet", "dark web", "phishing", "data breach", "computer fraud", "computer intrusion", "spyware", "ddos", "cryptocurrency", "trade secrets", "export-controlled"]}
+  - {id: europol, name: Europol, channel: news, interval: 3600, primary: true, labels: [law-enforcement],
+     url: "https://www.europol.europa.eu/cms/api/rss/news", include_keywords: *cyberwords}
+  - {id: fbi, name: FBI, channel: news, interval: 3600, primary: true, labels: [law-enforcement], enabled: false,
+     url: "https://www.fbi.gov/feeds/national-press-releases/rss.xml", include_keywords: *cyberwords}
+  - {id: nca-uk, name: UK National Crime Agency, channel: news, interval: 3600, primary: true,
+     labels: [law-enforcement], enabled: false,
+     url: "https://www.nationalcrimeagency.gov.uk/news?format=feed&type=rss", include_keywords: *cyberwords}
 
   - {id: bleepingcomputer, name: BleepingComputer, url: "https://www.bleepingcomputer.com/feed/"}
   - {id: thehackernews,    name: The Hacker News,  url: "https://feeds.feedburner.com/TheHackersNews"}
@@ -127,19 +259,19 @@ sources:
   - {id: theregister-sec,  name: The Register,     url: "https://www.theregister.com/security/headlines.atom"}
   - {id: schneier,         name: Schneier on Security, url: "https://www.schneier.com/feed/atom/", interval: 3600}
 
-  - {id: talos,      name: Cisco Talos,     channel: research, interval: 3600, url: "https://blog.talosintelligence.com/rss/"}
-  - {id: eset,       name: ESET Research,   channel: research, interval: 3600, url: "https://www.welivesecurity.com/en/rss/feed/"}
-  - {id: unit42,     name: Unit 42,         channel: research, interval: 3600, url: "https://unit42.paloaltonetworks.com/feed/"}
-  - {id: msft-sec,   name: Microsoft Security, channel: research, interval: 3600, url: "https://www.microsoft.com/en-us/security/blog/feed/"}
-  - {id: gtig,       name: Google Threat Intelligence, channel: research, interval: 3600,
+  - {id: talos, primary: true,      name: Cisco Talos,     channel: research, interval: 3600, url: "https://blog.talosintelligence.com/rss/"}
+  - {id: eset, primary: true,       name: ESET Research,   channel: research, interval: 3600, url: "https://www.welivesecurity.com/en/rss/feed/"}
+  - {id: unit42, primary: true,     name: Unit 42,         channel: research, interval: 3600, url: "https://unit42.paloaltonetworks.com/feed/"}
+  - {id: msft-sec, primary: true,   name: Microsoft Security, channel: research, interval: 3600, url: "https://www.microsoft.com/en-us/security/blog/feed/"}
+  - {id: gtig, primary: true,       name: Google Threat Intelligence, channel: research, interval: 3600,
      url: "https://cloudblog.withgoogle.com/topics/threat-intelligence/rss/"}
-  - {id: securelist, name: Kaspersky Securelist, channel: research, interval: 3600, url: "https://securelist.com/feed/"}
-  - {id: checkpoint, name: Check Point Research, channel: research, interval: 3600, url: "https://research.checkpoint.com/feed/"}
-  - {id: sophos,     name: Sophos X-Ops,    channel: research, interval: 3600,
+  - {id: securelist, primary: true, name: Kaspersky Securelist, channel: research, interval: 3600, url: "https://securelist.com/feed/"}
+  - {id: checkpoint, primary: true, name: Check Point Research, channel: research, interval: 3600, url: "https://research.checkpoint.com/feed/"}
+  - {id: sophos, primary: true,     name: Sophos X-Ops,    channel: research, interval: 3600,
      url: "https://news.sophos.com/en-us/category/threat-research/feed/"}
-  - {id: dfir-report, name: The DFIR Report, channel: dfir, interval: 7200, url: "https://thedfirreport.com/feed/"}
-  - {id: watchtowr,  name: watchTowr Labs,  channel: research, interval: 7200, url: "https://labs.watchtowr.com/rss/"}
-  - {id: sans-isc,   name: SANS ISC,        channel: dfir, interval: 3600, url: "https://isc.sans.edu/rssfeed_full.xml"}
+  - {id: dfir-report, primary: true, name: The DFIR Report, channel: dfir, interval: 7200, url: "https://thedfirreport.com/feed/"}
+  - {id: watchtowr, primary: true,  name: watchTowr Labs,  channel: research, interval: 7200, url: "https://labs.watchtowr.com/rss/"}
+  - {id: sans-isc, primary: true,   name: SANS ISC,        channel: dfir, interval: 3600, url: "https://isc.sans.edu/rssfeed_full.xml"}
   - {id: exploit-db, name: Exploit-DB,      channel: research, interval: 3600, url: "https://www.exploit-db.com/rss.xml"}
 
   - {id: databreaches, name: DataBreaches.net, channel: breaches, url: "https://databreaches.net/feed/"}
@@ -147,6 +279,7 @@ sources:
      url: "https://feeds.feedburner.com/HaveIBeenPwnedLatestBreaches"}
 
   - {id: ransomware-live, name: ransomware.live, channel: ransomware, interval: 1800, cluster: false,
+     labels: [ransomware],
      url: "https://www.ransomware.live/rss.xml"}
 
   - {id: anyrun,          name: ANY.RUN,          channel: malware, interval: 3600, url: "https://any.run/cybersecurity-blog/feed/"}

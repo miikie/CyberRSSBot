@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from . import render
 from .dedup import StoryIndex, fingerprint
+from .msrc import kb_url
 from .util import parse_time
 
 log = logging.getLogger(__name__)
@@ -143,6 +144,12 @@ class VulnEngine:
         merged, changes = merge_vuln(row["data"] if row else None, partial)
         merged["id"] = vid
         merged["aliases"] = [a for a in merged.get("aliases", []) if a != vid]
+        if row is None:
+            fixed = {f"Fixed in KB{kb}": kb_url(kb) for kb in await store.ms_kbs_for_cves([vid, *merged["aliases"]])}
+            if fixed:
+                merged["refs"] = {**(merged.get("refs") or {}), **fixed}
+        if merged.get("kev") and ("kev" in changes or row is None):
+            merged["kev"] = {**merged["kev"], "seen": int(time.time())}
         await store.vuln_put(vid, merged, [vid, *merged["aliases"]])
 
         if row is None:
@@ -164,6 +171,10 @@ class VulnEngine:
 
     async def _post(self, vid: str, d: dict) -> None:
         key = "kev" if d.get("kev") else "vulns"
+        intel = self.app.intel
+        if key == "vulns" and intel.routes:
+            key = intel.route(intel.analyze(d.get("title") or "", d.get("description") or "", kind="vuln",
+                                            vuln=d)[1], key)
         msg = await self.app.poster.send(key, embed=render.vuln_embed(d), ping_kev=bool(d.get("kev")))
         if msg:
             await self.app.store.vuln_set_post(vid, 1, msg.channel.id, msg.id)
@@ -223,6 +234,9 @@ class StoryEngine:
                     await self.app.vulns.attach_news(cve, item)
                 return
 
+        if not seed and self.app.intel.routes:
+            _, labels = self.app.intel.analyze(item["title"], item.get("summary", ""), source=item["source"])
+            channel_key = self.app.intel.route(labels, channel_key)
         data = {
             "title": item["title"], "url": item["url"], "source": item["source"],
             "summary": item.get("summary", ""), "published": item.get("published"),

@@ -1,0 +1,76 @@
+# Ransomware and data-extortion groups. Matching one of these adds the `ransomware` label.
+# Names that are also ordinary words (Play, Royal, Medusa...) only match next to a cue such as
+# "ransomware", "gang" or "group"; see kb/common_words.txt.
+- name: Akira
+- name: Qilin
+  aliases: [Agenda]
+- name: Play
+  aliases: [Playcrypt, PlayCrypt]
+- name: RansomHub
+- name: LockBit
+  aliases: [LockBit 3.0, LockBit Black, LockBit Green, LockBit 5.0, LockBitSupp]
+- name: Black Basta
+  aliases: [BlackBasta]
+- name: Clop
+  aliases: [Cl0p, CL0P]
+- name: Medusa
+  aliases: [MedusaLocker, Medusa Locker]
+- name: Rhysida
+- name: DragonForce
+- name: SafePay
+- name: Lynx
+- name: INC Ransom
+  aliases: [INC Ransomware, Inc Ransom]
+- name: Hunters International
+- name: World Leaks
+- name: BianLian
+- name: 8Base
+- name: Cactus
+- name: BlackSuit
+  aliases: [Black Suit]
+- name: Royal
+- name: ALPHV
+  aliases: [BlackCat, ALPHV/BlackCat, Noberus]
+- name: Conti
+- name: REvil
+  aliases: [Sodinokibi]
+- name: Hive
+- name: Ragnar Locker
+  aliases: [RagnarLocker]
+- name: Vice Society
+- name: Everest
+- name: Interlock
+- name: Fog
+- name: Embargo
+- name: KillSec
+  aliases: [Kill Security]
+- name: NoEscape
+- name: Snatch
+- name: Cuba
+- name: Trigona
+- name: Mallox
+  aliases: [TargetCompany]
+- name: Phobos
+- name: Babuk
+- name: Warlock
+- name: Termite
+- name: Space Bears
+- name: Money Message
+- name: Monti
+- name: Abyss
+  aliases: [Abyss Locker]
+- name: Stormous
+- name: RansomEXX
+- name: DarkSide
+- name: BlackMatter
+- name: Maze
+- name: Egregor
+- name: NetWalker
+- name: Ryuk
+- name: Anubis
+- name: Nova
+- name: Kairos
+- name: Crypto24
+- name: Sinobi
+- name: The Gentlemen
+- name: Devman

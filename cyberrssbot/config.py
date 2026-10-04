@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 
 DEFAULTS = {
     "database": "cyberrssbot.db",
-    "discord": {"guild_id": 0, "channels": {}, "post_gap_seconds": 1.5, "kev_ping_role_id": 0},
+    "discord": {"guild_id": 0, "channels": {}, "post_gap_seconds": 1.5, "kev_ping_role_id": 0,
+                "microsoft_ping_role_id": 0},
     "poll": {"default_interval": 1200, "max_age_days": 7, "first_run_lookback_hours": 0},
     "network": {"timeout": 45, "host_min_interval_default": 2.0, "host_min_interval": {}},
     "dedup": {
@@ -37,6 +38,13 @@ DEFAULTS = {
                      "reminder_hour_et": 8, "refresh_hours": 12, "horizon_days": 90},
         "companies": {},
         "benchmarks": {},
+    },
+    "kb": {"cache_dir": "kb_cache", "extras_dir": "kb", "refresh_days": 7, "use_misp": True},
+    "routing": {},
+    "digest": {
+        "enabled": False, "channel": "digest", "top_n": 5, "max_words": 40, "min_score": 0,
+        "late_grace_hours": 6, "max_message_chars": 3800, "post_empty": True, "catch_up_minutes": 90,
+        "entity_lookback_days": 14, "weights": {},
     },
     "sources": [],
 }

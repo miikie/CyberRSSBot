@@ -33,6 +33,17 @@ CREATE INDEX IF NOT EXISTS idx_fin_items_dirty ON fin_items(dirty);
 CREATE TABLE IF NOT EXISTS fin_quotes (symbol TEXT PRIMARY KEY, data TEXT NOT NULL, ts INTEGER);
 CREATE TABLE IF NOT EXISTS fin_earnings (
     symbol TEXT, date TEXT, data TEXT NOT NULL, updated INTEGER, PRIMARY KEY(symbol, date));
+CREATE TABLE IF NOT EXISTS ms_docs (
+    id TEXT PRIMARY KEY, released TEXT, revision TEXT, data TEXT NOT NULL, summary INTEGER DEFAULT 0,
+    channel_id INTEGER, message_id INTEGER, updated INTEGER);
+CREATE TABLE IF NOT EXISTS ms_kbs (
+    kb TEXT PRIMARY KEY, doc TEXT, data TEXT NOT NULL, rel_date TEXT, rel_type TEXT,
+    posted INTEGER DEFAULT 0, channel_id INTEGER, message_id INTEGER, dirty INTEGER DEFAULT 0,
+    first_seen INTEGER, updated INTEGER);
+CREATE INDEX IF NOT EXISTS idx_ms_kbs_dirty ON ms_kbs(dirty);
+CREATE INDEX IF NOT EXISTS idx_ms_kbs_doc ON ms_kbs(doc);
+CREATE TABLE IF NOT EXISTS ms_kb_cves (cve TEXT, kb TEXT, PRIMARY KEY(cve, kb));
+CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
 
 SOURCE_FIELDS = {"last_ok", "last_err", "last_err_ts", "fails", "seeded", "items", "cursor"}
@@ -258,8 +269,147 @@ class Store:
                                (start, end))
         return [json.loads(r["data"]) for r in rows]
 
+    async def stories_between(self, start: float, end: float) -> list[dict]:
+        rows = await self._all("SELECT id, ts, data FROM stories WHERE ts>=? AND ts<? ORDER BY id",
+                               (int(start), int(end)))
+        return [{"id": r["id"], "ts": r["ts"], "data": json.loads(r["data"])} for r in rows]
+
+    async def vulns_window(self, start: float, end: float) -> list[dict]:
+        rows = await self._all(
+            "SELECT vid, data, posted, first_seen FROM vulns WHERE (first_seen>=? AND first_seen<?) "
+            "OR (updated>=? AND data LIKE '%\"kev\"%') ORDER BY vid", (int(start), int(end), int(start)))
+        return [{"vid": r["vid"], "posted": r["posted"], "first_seen": r["first_seen"],
+                 "data": json.loads(r["data"])} for r in rows]
+
+    async def fin_between(self, start: float, end: float) -> list[dict]:
+        rows = await self._all("SELECT id, ts, data FROM fin_items WHERE ts>=? AND ts<? ORDER BY id",
+                               (int(start), int(end)))
+        return [{"id": r["id"], "ts": r["ts"], "data": json.loads(r["data"])} for r in rows]
+
+    async def quotes_all(self) -> list[tuple[str, dict, int]]:
+        rows = await self._all("SELECT symbol, data, ts FROM fin_quotes ORDER BY symbol")
+        return [(r["symbol"], json.loads(r["data"]), r["ts"]) for r in rows]
+
+    async def ms_kbs_between(self, start: float, end: float) -> list[dict]:
+        rows = await self._all(
+            "SELECT * FROM ms_kbs WHERE first_seen>=? AND first_seen<? AND posted!=-1 ORDER BY kb",
+            (int(start), int(end)))
+        return [self._ms_kb(r) for r in rows]
+
+    async def vuln_resolve_many(self, ids: list[str]) -> dict[str, str]:
+        ids = [i.upper() for i in ids if i]
+        out = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in await self._all(f"SELECT alias, vid FROM aliases WHERE alias IN ({marks})", chunk):
+                out[row["alias"]] = row["vid"]
+        return out
+
+    async def ms_doc_get(self, doc_id: str) -> dict | None:
+        row = await self._one("SELECT * FROM ms_docs WHERE id=?", (doc_id,))
+        return {**dict(row), "data": json.loads(row["data"])} if row else None
+
+    async def ms_doc_put(self, doc_id: str, released: str | None, revision: str | None, data: dict,
+                         summary: int | None = None) -> None:
+        await self.db.execute(
+            "INSERT INTO ms_docs(id, released, revision, data, updated) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET released=excluded.released, revision=excluded.revision, "
+            "data=excluded.data, updated=excluded.updated",
+            (doc_id, released, revision, json.dumps(data), int(time.time())))
+        if summary is not None:
+            await self.db.execute("UPDATE ms_docs SET summary=? WHERE id=? AND summary=0", (summary, doc_id))
+        await self.db.commit()
+
+    async def ms_doc_set_summary(self, doc_id: str, summary: int, channel_id=None, message_id=None) -> None:
+        await self._exec("UPDATE ms_docs SET summary=?, channel_id=?, message_id=? WHERE id=?",
+                         (summary, channel_id, message_id, doc_id))
+
+    async def ms_docs_pending(self) -> list[dict]:
+        rows = await self._all("SELECT * FROM ms_docs WHERE summary=0 ORDER BY id")
+        return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
+
+    @staticmethod
+    def _ms_kb(row) -> dict:
+        out = dict(row)
+        out["data"] = json.loads(out["data"])
+        out["data"]["release"] = {"date": out["rel_date"], "type": out["rel_type"]}
+        return out
+
+    async def ms_kb_get(self, kb: str) -> dict | None:
+        row = await self._one("SELECT * FROM ms_kbs WHERE kb=?", (kb,))
+        return self._ms_kb(row) if row else None
+
+    async def ms_kb_put(self, kb: str, data: dict, posted: int = 0) -> None:
+        now = int(time.time())
+        stored = json.dumps({k: v for k, v in data.items() if k != "release"})
+        await self._exec(
+            "INSERT INTO ms_kbs(kb, doc, data, posted, first_seen, updated) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(kb) DO UPDATE SET data=excluded.data, updated=excluded.updated",
+            (kb, data.get("doc"), stored, posted, now, now))
+
+    async def ms_kb_set_post(self, kb: str, posted: int, channel_id=None, message_id=None) -> None:
+        await self._exec("UPDATE ms_kbs SET posted=?, channel_id=?, message_id=?, dirty=0 WHERE kb=?",
+                         (posted, channel_id, message_id, kb))
+
+    async def ms_kb_mark_dirty(self, kb: str, dirty: int = 1) -> None:
+        await self._exec("UPDATE ms_kbs SET dirty=? WHERE kb=?", (dirty, kb))
+
+    async def ms_kb_set_release(self, kb: str, released: str | None, kind: str | None) -> None:
+        await self._exec(
+            "UPDATE ms_kbs SET rel_date=?, rel_type=?, "
+            "dirty=CASE WHEN posted=1 AND message_id IS NOT NULL THEN 1 ELSE dirty END WHERE kb=?",
+            (released, kind, kb))
+
+    async def ms_kbs_dirty(self, limit: int = 15) -> list[dict]:
+        rows = await self._all(
+            "SELECT * FROM ms_kbs WHERE dirty=1 AND message_id IS NOT NULL ORDER BY updated LIMIT ?", (limit,))
+        return [self._ms_kb(r) for r in rows]
+
+    async def ms_kbs_unposted(self, since: float) -> list[dict]:
+        rows = await self._all("SELECT * FROM ms_kbs WHERE posted=0 AND first_seen>=? ORDER BY kb", (int(since),))
+        return [self._ms_kb(r) for r in rows]
+
+    async def ms_kbs_missing_release(self, since: float) -> list[str]:
+        rows = await self._all("SELECT kb FROM ms_kbs WHERE rel_date IS NULL AND first_seen>=? ORDER BY kb",
+                               (int(since),))
+        return [r["kb"] for r in rows]
+
+    async def ms_kbs_for_doc(self, doc_id: str) -> list[dict]:
+        rows = await self._all("SELECT * FROM ms_kbs WHERE doc=? AND posted=1 ORDER BY kb", (doc_id,))
+        return [self._ms_kb(r) for r in rows]
+
+    async def ms_kb_cves_add(self, kb: str, cves) -> None:
+        await self.db.executemany("INSERT OR IGNORE INTO ms_kb_cves(cve, kb) VALUES (?,?)",
+                                  [(c.upper(), kb) for c in cves])
+        await self.db.commit()
+
+    async def ms_kbs_for_cves(self, ids: list[str]) -> list[str]:
+        ids = [i.upper() for i in ids if i]
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        rows = await self._all(f"SELECT DISTINCT kb FROM ms_kb_cves WHERE cve IN ({marks}) ORDER BY kb", ids)
+        return [r["kb"] for r in rows]
+
+    async def ms_releases_put(self, rows: list[tuple[str, str, str, str]]) -> None:
+        await self.db.executemany(
+            "INSERT INTO ms_releases(kb, build, date, type) VALUES (?,?,?,?) "
+            "ON CONFLICT(kb, build) DO UPDATE SET date=excluded.date, type=excluded.type", rows)
+        await self.db.commit()
+
+    async def ms_release_get(self, kb: str) -> tuple[str, str] | None:
+        row = await self._one("SELECT date, type FROM ms_releases WHERE kb=? ORDER BY date LIMIT 1", (kb,))
+        return (row["date"], row["type"]) if row else None
+
     async def prune(self) -> None:
         now = int(time.time())
+        old_kbs = now - 400 * 86400
+        await self.db.execute("DELETE FROM ms_kb_cves WHERE kb IN (SELECT kb FROM ms_kbs WHERE first_seen<?)",
+                              (old_kbs,))
+        await self.db.execute("DELETE FROM ms_kbs WHERE first_seen<?", (old_kbs,))
+        await self.db.execute("DELETE FROM seen WHERE ts<? AND (key LIKE 'mskb:%' OR key LIKE 'digest:%')",
+                              (now - 30 * 86400,))
         await self.db.execute("DELETE FROM fin_items WHERE ts<?", (now - 30 * 86400,))
         await self.db.execute("DELETE FROM fin_earnings WHERE updated<?", (now - 30 * 86400,))
         await self.db.execute("DELETE FROM seen WHERE ts<? AND key LIKE 'fin:%'", (now - 30 * 86400,))

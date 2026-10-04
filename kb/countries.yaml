@@ -1,0 +1,86 @@
+# Countries, with the adjective forms headlines use ("Russian hackers", "North Korean IT workers").
+# Chad, Georgia and Jordan are left out on purpose: as bare words they are usually a person or a US state.
+- {name: United States, aliases: [U.S., US, USA, U.S.A., America, American]}
+- {name: United Kingdom, aliases: [UK, U.K., Britain, British, Great Britain, England, Scotland, Wales]}
+- {name: China, aliases: [Chinese, PRC, People's Republic of China]}
+- {name: Russia, aliases: [Russian, Russian Federation]}
+- {name: North Korea, aliases: [North Korean, DPRK]}
+- {name: Iran, aliases: [Iranian]}
+- {name: Ukraine, aliases: [Ukrainian]}
+- {name: Israel, aliases: [Israeli]}
+- {name: India, aliases: [Indian]}
+- {name: Pakistan, aliases: [Pakistani]}
+- {name: Germany, aliases: [German]}
+- {name: France, aliases: [French]}
+- {name: Netherlands, aliases: [Dutch, The Netherlands]}
+- {name: Spain, aliases: [Spanish]}
+- {name: Italy, aliases: [Italian]}
+- {name: Poland, aliases: [Polish]}
+- {name: Japan, aliases: [Japanese]}
+- {name: South Korea, aliases: [South Korean, Republic of Korea]}
+- {name: Taiwan, aliases: [Taiwanese]}
+- {name: Vietnam, aliases: [Vietnamese]}
+- {name: Australia, aliases: [Australian]}
+- {name: Canada, aliases: [Canadian]}
+- {name: Brazil, aliases: [Brazilian]}
+- {name: Mexico, aliases: [Mexican]}
+- {name: Belarus, aliases: [Belarusian]}
+- {name: Turkey, aliases: [Türkiye, Turkiye, Turkish]}
+- {name: Saudi Arabia, aliases: [Saudi]}
+- {name: United Arab Emirates, aliases: [UAE, Emirati]}
+- {name: Singapore, aliases: [Singaporean]}
+- {name: Indonesia, aliases: [Indonesian]}
+- {name: Philippines, aliases: [Filipino, Philippine]}
+- {name: Thailand, aliases: [Thai]}
+- {name: Malaysia, aliases: [Malaysian]}
+- {name: Nigeria, aliases: [Nigerian]}
+- {name: South Africa, aliases: [South African]}
+- {name: Ireland, aliases: [Irish]}
+- {name: Sweden, aliases: [Swedish]}
+- {name: Norway, aliases: [Norwegian]}
+- {name: Denmark, aliases: [Danish]}
+- {name: Finland, aliases: [Finnish]}
+- {name: Switzerland, aliases: [Swiss]}
+- {name: Austria, aliases: [Austrian]}
+- {name: Belgium, aliases: [Belgian]}
+- {name: Portugal, aliases: [Portuguese]}
+- {name: Greece, aliases: [Greek]}
+- {name: Romania, aliases: [Romanian]}
+- {name: Bulgaria, aliases: [Bulgarian]}
+- {name: Hungary, aliases: [Hungarian]}
+- {name: Czech Republic, aliases: [Czechia, Czech]}
+- {name: Slovakia, aliases: [Slovak]}
+- {name: Serbia, aliases: [Serbian]}
+- {name: Croatia, aliases: [Croatian]}
+- {name: Estonia, aliases: [Estonian]}
+- {name: Latvia, aliases: [Latvian]}
+- {name: Lithuania, aliases: [Lithuanian]}
+- {name: Moldova, aliases: [Moldovan]}
+- {name: Armenia, aliases: [Armenian]}
+- {name: Azerbaijan, aliases: [Azerbaijani]}
+- {name: Kazakhstan, aliases: [Kazakh]}
+- {name: Uzbekistan, aliases: [Uzbek]}
+- {name: Egypt, aliases: [Egyptian]}
+- {name: Morocco, aliases: [Moroccan]}
+- {name: Kenya, aliases: [Kenyan]}
+- {name: Ghana, aliases: [Ghanaian]}
+- {name: Qatar, aliases: [Qatari]}
+- {name: Kuwait, aliases: [Kuwaiti]}
+- {name: Lebanon, aliases: [Lebanese]}
+- {name: Syria, aliases: [Syrian]}
+- {name: Iraq, aliases: [Iraqi]}
+- {name: Afghanistan, aliases: [Afghan]}
+- {name: Bangladesh, aliases: [Bangladeshi]}
+- {name: Sri Lanka, aliases: [Sri Lankan]}
+- {name: Nepal, aliases: [Nepali, Nepalese]}
+- {name: Myanmar, aliases: [Burma, Burmese]}
+- {name: Cambodia, aliases: [Cambodian]}
+- {name: Hong Kong}
+- {name: New Zealand}
+- {name: Argentina, aliases: [Argentine, Argentinian]}
+- {name: Chile, aliases: [Chilean]}
+- {name: Colombia, aliases: [Colombian]}
+- {name: Peru, aliases: [Peruvian]}
+- {name: Venezuela, aliases: [Venezuelan]}
+- {name: Cuba, aliases: [Cuban]}
+- {name: European Union, aliases: [EU, E.U.]}
