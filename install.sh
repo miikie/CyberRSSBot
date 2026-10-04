@@ -11,9 +11,25 @@ BUNDLE="$SRC/deploy.bundle.enc"
 
 step() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+as_app() { (cd "$APP" && runuser -u "$APP_USER" -- "$@"); }
 
 [ "$(id -u)" -eq 0 ] || die "run as root: bash install.sh"
 command -v apt-get >/dev/null || die "this script expects Debian or Ubuntu"
+
+if [ -z "${CYBERRSSBOT_UPDATED:-}" ] && [ -d "$SRC/.git" ] && command -v git >/dev/null; then
+    step "Fetching the latest code"
+    before="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)"
+    if git -C "$SRC" -c safe.directory="$SRC" pull --ff-only; then
+        after="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)"
+        if [ "$before" != "$after" ]; then
+            echo "Updated $(echo "$before" | cut -c1-7) -> $(echo "$after" | cut -c1-7); restarting the installer."
+            CYBERRSSBOT_UPDATED=1 exec bash "$SRC/install.sh" "$@"
+        fi
+        echo "Already up to date."
+    else
+        echo "Could not update from git (no network, or local changes); continuing with the code already here."
+    fi
+fi
 
 step "Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -35,14 +51,32 @@ if systemctl is-active --quiet cyberrssbot 2>/dev/null; then
     systemctl stop cyberrssbot
 fi
 
+if [ -f "$APP/config.yaml" ]; then
+    OLD_DB="$(sed -n 's/^database:[[:space:]]*//p' "$APP/config.yaml" | tr -d '"'"'"' ')"
+    OLD_DB="${OLD_DB:-cyberrssbot.db}"
+    if [ -f "$APP/$OLD_DB" ]; then
+        step "Saving a copy of the database before the update"
+        mkdir -p "$BASE/backups"
+        snapshot="$BASE/backups/pre-update-$(date +%F-%H%M%S).db"
+        if sqlite3 "$APP/$OLD_DB" ".backup '$snapshot'"; then
+            echo "saved $snapshot"
+            ls -1t "$BASE"/backups/pre-update-*.db 2>/dev/null | tail -n +4 | xargs -r rm -f
+        else
+            echo "Could not snapshot the database; continuing."
+        fi
+    fi
+fi
+
 step "Copying code to $APP"
 if [ "$SRC" != "$APP" ]; then
-    rm -rf "$APP/cyberrssbot"
+    rm -rf "$APP/cyberrssbot" "$APP/kb"
     cp -a "$SRC/cyberrssbot" "$SRC/requirements.txt" "$APP/"
+    [ -d "$SRC/kb" ] && cp -a "$SRC/kb" "$APP/"
     for f in README.md LICENSE config.example.yaml .env.example; do
         [ -f "$SRC/$f" ] && cp -a "$SRC/$f" "$APP/"
     done
 fi
+[ -d "$APP/kb" ] || die "the kb/ folder is missing from $SRC; the checkout is incomplete"
 
 if [ ! -f "$APP/.env" ] || [ ! -f "$APP/config.yaml" ]; then
     [ -f "$BUNDLE" ] || die "$APP/.env or config.yaml is missing and there is no deploy.bundle.enc to restore them from"
@@ -88,8 +122,14 @@ fi
 runuser -u "$APP_USER" -- "$VENV/bin/pip" install -q --upgrade pip
 runuser -u "$APP_USER" -- "$VENV/bin/pip" install -q -r "$APP/requirements.txt"
 
-step "Checking every source once (posts nothing, takes about a minute)"
-(cd "$APP" && runuser -u "$APP_USER" -- "$VENV/bin/python" -m cyberrssbot --check) || echo "Some sources failed the check; the service is installed anyway."
+step "Adding new settings and sources to config.yaml"
+echo "Your existing values are kept. You will be asked for any channel ID that is not set yet;"
+echo "press Enter to skip one (its posts then go to the default channel)."
+as_app "$VENV/bin/python" -m cyberrssbot --upgrade-config \
+    || echo "config.yaml could not be upgraded automatically; it was left as it was."
+
+step "Checking every source once (posts nothing; the first run downloads about 55 MB of reference data)"
+as_app "$VENV/bin/python" -m cyberrssbot --check || echo "Some sources failed the check; the service is installed anyway."
 
 write_unit() {
     cat > "$UNIT" <<UNITFILE
@@ -160,11 +200,14 @@ chmod 755 /etc/cron.daily/cyberrssbot-backup
 step "Done"
 systemctl --no-pager --lines=0 status cyberrssbot || true
 echo
-journalctl -u cyberrssbot -n 15 --no-pager || true
+sleep 12
+journalctl -u cyberrssbot -n 25 --no-pager || true
 echo
 if systemctl is-active --quiet cyberrssbot; then
     echo "The bot is running and will start automatically on boot."
-    echo "Logs: journalctl -u cyberrssbot -f     Update: git pull && bash install.sh"
+    echo "Lines above that start with \"channel '...'\" are channels the bot cannot post to; fix the ID or the"
+    echo "permissions in Discord, then run: systemctl restart cyberrssbot"
+    echo "Logs: journalctl -u cyberrssbot -f     Update: bash install.sh     Settings: nano $APP/config.yaml"
 else
     die "the service is not running; see the log above"
 fi

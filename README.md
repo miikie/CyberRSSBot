@@ -30,6 +30,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Signal over volume.** Vulnerabilities are filtered by CVSS, EPSS, KEV and a vendor watchlist. High-volume CNAs and WordPress plugin noise are muted.
 - **Controlled first run.** A new source records its backlog without posting it, optionally posting only the last few hours so channels start populated without being flooded.
 - **Polite fetching.** Per-host pacing, ETag / Last-Modified conditional requests, `Retry-After` support and exponential backoff per source.
+- **Upgrades in place.** New settings and sources are merged into an existing configuration without touching the values already there, so an update is a single installer run.
 - **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel. At startup every configured channel is checked for existence and permissions; a channel that fails is reported and skipped instead of crashing the bot.
 - **Scraper for feedless sites.** Any page can become a source with a CSS selector.
 - **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
@@ -212,6 +213,7 @@ cyberrssbot/
 │   ├── http.py          per-host pacing, conditional GET, retries
 │   ├── render.py        Discord embeds
 │   ├── store.py         SQLite schema and queries
+│   ├── upgrade.py       adds new settings and sources to an existing config file
 │   ├── util.py          shared helpers
 │   └── sources/
 │       ├── base.py      source base class
@@ -220,6 +222,7 @@ cyberrssbot/
 │       ├── msrc.py      Windows security update tracker
 │       └── vulns.py     NVD, KEV, GHSA and EPSS sources
 ├── kb/                  manual lists: actors, ransomware groups, regulators, countries
+├── install.sh           installer and updater for a Debian or Ubuntu host
 ├── config.example.yaml
 ├── .env.example
 └── requirements.txt

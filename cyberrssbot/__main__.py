@@ -15,6 +15,11 @@ def main() -> None:
     parser.add_argument("-c", "--config", default="config.yaml")
     parser.add_argument("--check", action="store_true",
                         help="fetch every source once, print health, post nothing")
+    parser.add_argument("--upgrade-config", action="store_true",
+                        help="add settings and sources that are new in config.example.yaml to the config file, "
+                             "then ask for channel ids that are still unset")
+    parser.add_argument("--example", default="config.example.yaml", metavar="PATH",
+                        help="the example config to compare against (with --upgrade-config)")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--log-file", metavar="PATH",
                         help="log to a rotating file instead of stderr (needed under pythonw / a scheduled task)")
@@ -26,6 +31,10 @@ def main() -> None:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, handlers=handlers,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     logging.getLogger("discord").setLevel(logging.WARNING)
+
+    if args.upgrade_config:
+        from .upgrade import run
+        sys.exit(run(args.config, args.example))
 
     cfg = load_config(args.config)
     if args.check:
