@@ -33,6 +33,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Polite fetching.** Per-host pacing, ETag / Last-Modified conditional requests, `Retry-After` support and exponential backoff per source.
 - **Upgrades in place.** New settings and sources are merged into an existing configuration without touching the values already there, so an update is a single installer run.
 - **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel. At startup every configured channel is checked for existence and permissions; a channel that fails is reported and skipped instead of crashing the bot. Channels can be reassigned from Discord with `/channel set`, without editing the config file or restarting.
+- **Live status.** The bot's status dot is a threat light (green, yellow, red) and its status text rotates through current facts: KEV additions, the busiest ransomware group, sector moves, the next Patch Tuesday and earnings.
 - **Scraper for feedless sites.** Any page can become a source with a CSS selector.
 - **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
 - **Deterministic digests.** Scheduled summaries built by rules from public reference data, with a coverage section that says what was and wasn't checked.
@@ -279,6 +280,9 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 | `/entity <name> [private]` | What the knowledge base knows about an actor, malware family or vendor, and recent items mentioning it |
 | `/stock <ticker>` | Latest quote and the last 5 finance items for a watchlist ticker |
 | `/earnings` | Upcoming watchlist earnings over the next 14 days |
+| `/presence status` | Current threat level, what triggered it and which status lines are live (moderators only) |
+| `/presence pin <text>` · `/presence unpin` | Show a fixed status text until it is unpinned (moderators only) |
+| `/presence pause` | Freeze the status; run again to resume (moderators only) |
 
 ## Built with
 
@@ -315,6 +319,7 @@ cyberrssbot/
 │   ├── http.py          per-host pacing, conditional GET, retries
 │   ├── paper.py         paper-trading simulation and statistics
 │   ├── paperdesk.py     paper-trading ledger, backtests and posts
+│   ├── presence.py      status light and rotating status text
 │   ├── prices.py        daily price download and quality checks
 │   ├── render.py        Discord embeds
 │   ├── signals.py       vulnerability pressure scores and spikes

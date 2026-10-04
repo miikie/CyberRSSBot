@@ -20,6 +20,7 @@ from .fsignals import FinanceSignals
 from .http import FetchError, Http
 from .incidents import IncidentDesk
 from .paperdesk import PaperDesk
+from .presence import Presence
 from .kb import KnowledgeBase
 from .market import MarketCalendar
 from .sources import build_sources
@@ -75,6 +76,7 @@ class App:
         self.stories = StoryEngine(self)
         self.market = MarketCalendar()
         self.finance = FinanceEngine(self)
+        self.presence = Presence(self)
         self.sources = build_sources(self)
         self.tasks: list[asyncio.Task] = []
         self._holidays_day = None
@@ -121,6 +123,8 @@ class App:
         self.tasks.append(asyncio.create_task(self._kb_loop(), name="kb"))
         if (self.cfg.get("digest") or {}).get("enabled"):
             self.tasks.append(asyncio.create_task(self.digest.loop(), name="digest"))
+        if self.presence.enabled and self.presence.setter:
+            self.tasks.append(asyncio.create_task(self.presence.loop(), name="presence"))
         if ((self.cfg.get("finance") or {}).get("events") or {}).get("backfill", True):
             self.tasks.append(asyncio.create_task(self._backfill_once(), name="event-backfill"))
 

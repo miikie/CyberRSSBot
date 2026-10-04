@@ -554,6 +554,32 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
 
     tree.add_command(paper_group)
 
+    presence_group = app_commands.Group(name="presence", description="The bot's status light and status text",
+                                        default_permissions=discord.Permissions(manage_guild=True))
+
+    @presence_group.command(name="status", description="Current threat level, the reason and the live status lines")
+    async def presence_status(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.followup.send(f"```\n{(await app.presence.describe())[:1900]}\n```", ephemeral=True)
+
+    @presence_group.command(name="pin", description="Show this text as the status until unpinned")
+    @app_commands.describe(text="Up to 128 characters")
+    async def presence_pin(interaction: discord.Interaction, text: app_commands.Range[str, 1, 128]):
+        await app.presence.set_pin(text.strip())
+        await interaction.response.send_message(f"pinned: {text.strip()}", ephemeral=True)
+
+    @presence_group.command(name="unpin", description="Remove the pinned status text")
+    async def presence_unpin(interaction: discord.Interaction):
+        await app.presence.set_pin(None)
+        await interaction.response.send_message("unpinned.", ephemeral=True)
+
+    @presence_group.command(name="pause", description="Freeze the status as it is; run again to resume")
+    async def presence_pause(interaction: discord.Interaction):
+        await app.presence.set_paused(not app.presence.paused)
+        await interaction.response.send_message("paused." if app.presence.paused else "resumed.", ephemeral=True)
+
+    tree.add_command(presence_group)
+
     @tree.command(name="earnings", description="Upcoming earnings for the watchlist over the next 14 days")
     async def earnings(interaction: discord.Interaction):
         today = datetime.now(timezone.utc).date()
@@ -569,6 +595,11 @@ class CyberRSSBotClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
         app.poster = Poster(self, app.cfg)
         register_commands(self.tree, app)
+        app.presence.setter = self.set_presence
+
+    async def set_presence(self, status: str, text: str) -> None:
+        await self.wait_until_ready()
+        await self.change_presence(status=discord.Status(status), activity=discord.CustomActivity(name=text))
 
     async def setup_hook(self) -> None:
         await self.app.start()

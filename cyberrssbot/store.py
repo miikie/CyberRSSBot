@@ -382,6 +382,17 @@ class Store:
         row = await self._one("SELECT key, ts FROM seen WHERE key LIKE 'digest:%' ORDER BY ts DESC, key DESC LIMIT 1")
         return (row["key"].split(":", 1)[1], row["ts"]) if row else None
 
+    async def vulns_touched(self, since: float) -> list[dict]:
+        rows = await self._all(
+            "SELECT vid, data, posted, channel_id, message_id, first_seen FROM vulns WHERE first_seen>=? "
+            "OR (updated>=? AND data LIKE '%\"kev\"%') ORDER BY vid", (int(since), int(since)))
+        return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
+
+    async def seen_since(self, prefix: str, since: float) -> list[tuple[str, int]]:
+        rows = await self._all("SELECT key, ts FROM seen WHERE key>=? AND key<? AND ts>=? ORDER BY ts",
+                               (prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1), int(since)))
+        return [(r["key"], r["ts"]) for r in rows]
+
     async def stories_between(self, start: float, end: float) -> list[dict]:
         rows = await self._all("SELECT id, ts, data FROM stories WHERE ts>=? AND ts<? ORDER BY id",
                                (int(start), int(end)))

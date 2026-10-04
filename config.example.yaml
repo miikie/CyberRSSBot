@@ -237,6 +237,48 @@ signals:
                    insider.open_buy: 2, insider.cluster_sell: 2, pressure.spike: 2, kev.vendor: 1,
                    vuln.vendor_critical: 1}
 
+# The bot's own Discord status: the dot is a threat light and the text rotates through live facts.
+presence:
+  enabled: true
+  # A new line every rotate_seconds; the threat level is re-read from the database every evaluate_seconds.
+  # Discord is never updated more often than min_update_seconds, and only when something changed.
+  rotate_seconds: 90
+  evaluate_seconds: 60
+  min_update_seconds: 30
+  # Red (do not disturb) for critical_hours after: a KEV addition with known ransomware use, an 8-K Item 1.05 from a
+  # watchlist or exposure company, or an exploited CVE in a watchlist vendor. While red, the reason is pinned.
+  critical_hours: 2
+  # Yellow (idle) for elevated_hours after: any KEV addition, a posted card with CVSS >= elevated_min_cvss, or a
+  # watchlist move alert. Green (online) otherwise. A rise is reported once in the log channel.
+  elevated_hours: 6
+  elevated_min_cvss: 9.0
+  # How far ahead the earnings and Patch Tuesday lines look, and how long the KB line stays after Patch Tuesday.
+  earnings_within_days: 14
+  patch_tuesday_within_days: 14
+  kb_hours: 48
+  # Shown when no line has fresh data.
+  fallback: "watching."
+  # Wording of each rotating line. A line is skipped while it has no fresh data. Everything is lowercased and
+  # cut to 128 characters.
+  lines:
+    kev: "kev +{n} · {vendor}"                         # KEV additions today, latest vendor
+    ransomware: "{group} · {n} in 24h"                 # most active leak-site group
+    unexplained: "{ticker} {pct}% · no reason found"   # an unexplained move today
+    cibr: "cibr {pct}%"                                # during the session
+    cibr_closed: "cibr closed {pct}%"                  # after the close
+    patch_tuesday: "patch tuesday in {n}d"
+    patch_today: "patch tuesday · today"
+    kb: "kb{kb} · {fixed} fixed · {late} too late"     # largest KB of the release; too late = exploited CVEs in it
+    earnings: "{ticker} reports in {n}d"
+    earnings_today: "{ticker} reports today"
+    disclosures: "{n} disclosure{s} this month"        # 8-K Item 1.05 filings this month
+    digest: "next digest {time} utc"
+  # The line pinned while the light is red.
+  reasons:
+    kev_ransomware: "{cve} · it's being used"
+    incident: "{ticker} · disclosed"
+    exploited_vendor: "{vendor} · open"
+
 # Simulated paper trading. No broker, no orders, no real money: trades are filled on daily open/close prices.
 paper:
   # true = keep a live ledger and post a line in #signals for each paper entry and exit. /paper backtest works either way.
