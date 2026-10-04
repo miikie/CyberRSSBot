@@ -23,6 +23,16 @@ discord:
     malware-radar: 0
     supply-chain: 0
     data-privacy-laws: 0
+    # Daily close summary and move alerts (fin-quotes). 0 = posts go to the default channel.
+    finance-tape: 0
+    # Watchlist SEC filings (sec-edgar). 0 = posts go to the default channel.
+    finance-filings: 0
+    # Market-wide 8-K cybersecurity incident disclosures. 0 = posts go to the default channel.
+    finance-incidents: 0
+    # Earnings calendar and reminders (fin-earnings). 0 = posts go to the default channel.
+    finance-earnings: 0
+    # Signals, event studies and paper-trading reports. 0 = posts go to the default channel.
+    finance-signals: 0
     log: 0
   kev_ping_role_id: 0
   # Role mentioned on each new Windows update card. 0 = no ping. Checked at startup;
@@ -97,6 +107,53 @@ finance:
     CIBR: First Trust NASDAQ Cybersecurity ETF
     HACK: Amplify Cybersecurity ETF
     BUG: Global X Cybersecurity ETF
+
+# Server layout used by /setup layout (Administrator only). The command shows a plan first and changes nothing
+# until its button is pressed. Channels are matched by the channel id their keys already point at, never by
+# name; a layout channel none of whose keys points at an existing channel is created. Channels that keys used
+# to point at and that no layout channel adopts are moved to the archive category, read-only. Channels no key
+# points at are never touched. Nothing is ever deleted.
+layout:
+  # Rename adopted channels to the layout name (history is kept).
+  rename_existing: true
+  # @everyone can read but not send in the managed feed channels.
+  feeds_read_only: true
+  archive_category: "📦 Archive"
+  # `split: true` means: don't adopt a channel that another layout channel's keys also point at; create a new
+  # one instead. That is how #exploited-in-wild is split out of #cves (kev and vulns share a channel today).
+  # `private: true` on a category hides it from @everyone.
+  categories:
+    - name: "📋 Overview"
+      channels:
+        - {name: digests,              keys: [digest]}
+    - name: "🚨 Vulnerabilities"
+      channels:
+        - {name: exploited-in-wild,    keys: [kev], split: true}
+        - {name: cves,                 keys: [vulns]}
+        - {name: windows,              keys: [microsoft]}
+        - {name: advisories,           keys: [advisories]}
+    - name: "🛰️ Threat Intel"
+      channels:
+        - {name: threat-intel,         keys: [research, dfir, malware, apt-tracker, malware-radar]}
+    - name: "🔥 Incidents"
+      channels:
+        - {name: breaches-ransomware,  keys: [breaches, ransomware]}
+    - name: "📰 News & Policy"
+      channels:
+        - {name: articles,             keys: [news, default]}
+        - {name: supply-chain-policy,  keys: [supply-chain, data-privacy-laws], split: true}
+    - name: "💹 Cyber-Finance"
+      channels:
+        - {name: cyber-markets,        keys: [finance]}
+        - {name: market-tape,          keys: [finance-tape]}
+        - {name: sec-filings,          keys: [finance-filings]}
+        - {name: incident-disclosures, keys: [finance-incidents]}
+        - {name: earnings,             keys: [finance-earnings]}
+        - {name: signals,              keys: [finance-signals]}
+    - name: "🔧 Admin"
+      private: true
+      channels:
+        - {name: bot-log,              keys: [log]}
 
 # Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors, the
 # CISA KEV vendor/product list and MITRE's CWE names, plus the manual lists in `extras_dir`.
@@ -296,9 +353,9 @@ sources:
   - {id: malwarebytes,    name: Malwarebytes Labs, channel: malware, interval: 3600,
      url: "https://www.malwarebytes.com/blog/feed/index.xml"}
 
-  - {id: sec-edgar,    type: sec_edgar,    name: SEC EDGAR,         channel: finance, interval: 600, idle_interval: 3600}
-  - {id: fin-quotes,   type: quotes,       name: Finnhub quotes,    channel: finance, interval: 900}
-  - {id: fin-earnings, type: earnings,     name: Finnhub earnings,  channel: finance, interval: 1800}
+  - {id: sec-edgar,    type: sec_edgar,    name: SEC EDGAR,         channel: finance-filings, interval: 600, idle_interval: 3600}
+  - {id: fin-quotes,   type: quotes,       name: Finnhub quotes,    channel: finance-tape, interval: 900}
+  - {id: fin-earnings, type: earnings,     name: Finnhub earnings,  channel: finance-earnings, interval: 1800}
   - {id: fin-news,     type: company_news, name: Finnhub news,      channel: finance, interval: 3600, enabled: false}
   - {id: ir-cloudflare, name: Cloudflare IR, channel: finance, tickers: [NET], interval: 3600,
      url: "https://cloudflare.net/rss/pressrelease.aspx"}

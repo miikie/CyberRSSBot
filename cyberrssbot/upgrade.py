@@ -10,6 +10,8 @@ import time
 import yaml
 
 SOURCE_KEYS = ("primary", "labels", "quote")
+CHANNEL_MOVES = {"sec-edgar": ("finance", "finance-filings"), "fin-quotes": ("finance", "finance-tape"),
+                 "fin-earnings": ("finance", "finance-earnings")}
 KEEP_AS_IS = {("finance", "companies"), ("finance", "benchmarks")}
 _ID_RE = re.compile(r"\d{15,21}")
 
@@ -53,6 +55,10 @@ def merge_config(config: dict, example: dict) -> list[str]:
                 if key in wanted and key not in mine:
                     mine[key] = copy.deepcopy(wanted[key])
                     changes.append(f"set {key} on source {sid}")
+            old, new = CHANNEL_MOVES.get(sid, (None, None))
+            if old and mine.get("channel") == old and wanted.get("channel") == new:
+                mine["channel"] = new
+                changes.append(f"moved source {sid} from channel {old} to {new}")
         previous = sid
     return changes
 

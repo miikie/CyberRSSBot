@@ -270,6 +270,10 @@ class Store:
                                (start, end))
         return [json.loads(r["data"]) for r in rows]
 
+    async def setting_get(self, key: str) -> str | None:
+        row = await self._one("SELECT value FROM settings WHERE key=?", (key,))
+        return row["value"] if row else None
+
     async def settings_get(self, prefix: str) -> dict[str, str]:
         rows = await self._all("SELECT key, value FROM settings WHERE key LIKE ? ORDER BY key", (prefix + "%",))
         return {r["key"][len(prefix):]: r["value"] for r in rows}

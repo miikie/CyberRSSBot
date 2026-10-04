@@ -39,21 +39,39 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 
 ## Channels
 
-| Channel | Contents |
-|---|---|
-| Actively exploited | New CISA KEV entries, plus an escalation when an already-posted CVE is added to KEV |
-| CVEs | One card per CVE / GHSA, merged from NVD, GitHub Advisories, MSRC, KEV and EPSS |
-| Advisories | Government CERTs and vendor PSIRTs |
-| Articles | Security journalism |
-| Threat intel | Vendor threat intelligence and exploit research |
-| DFIR | Incident write-ups and handler diaries |
-| Data breaches | Breach reports and newly loaded breach corpora |
-| Ransomware | Ransomware leak-site victim postings |
-| Malware | Malware analysis, sandbox and traffic research |
-| Finance | SEC filings, press releases, move alerts, the daily close summary and earnings posts |
-| Microsoft | One card per Windows security update (KB), revision notes and the monthly Patch Tuesday summary |
-| Digest | Scheduled intelligence digests |
-| Bot log | Source failure and recovery notices, digest run summaries |
+Channels are grouped into categories. Each row is one channel; the keys are the names sources and features post to.
+
+| Category | Channel | Contents |
+|---|---|---|
+| Overview | digests | Scheduled intelligence digests |
+| Vulnerabilities | exploited-in-wild | New CISA KEV entries, plus an escalation when an already-posted CVE is added to KEV |
+| Vulnerabilities | cves | One card per CVE / GHSA, merged from NVD, GitHub Advisories, MSRC, KEV and EPSS |
+| Vulnerabilities | windows | One card per Windows security update (KB), revision notes and the monthly Patch Tuesday summary |
+| Vulnerabilities | advisories | Government CERTs and vendor PSIRTs |
+| Threat Intel | threat-intel | Vendor threat research, malware analysis, DFIR write-ups and exploit research |
+| Incidents | breaches-ransomware | Breach reports, breach corpora and ransomware leak-site claims |
+| News & Policy | articles | Security journalism and law-enforcement press releases |
+| News & Policy | supply-chain-policy | Targets for the optional supply-chain and privacy-law routes |
+| Cyber-Finance | cyber-markets | Press releases, investor relations and newswire items for the watchlist |
+| Cyber-Finance | market-tape | The daily close summary and big-move alerts |
+| Cyber-Finance | sec-filings | Watchlist SEC filings |
+| Cyber-Finance | incident-disclosures | Market-wide 8-K cybersecurity incident disclosures |
+| Cyber-Finance | earnings | The earnings calendar and same-day reminders |
+| Cyber-Finance | signals | Signals and evidence reports |
+| Admin (private) | bot-log | Source failures and recoveries, channel checks, digest and layout runs |
+
+### Server layout
+
+`/setup layout` organises the server into this layout. It shows the full plan first: categories and channels to create, channels to adopt, rename and move, channels to retire, permission changes and the final key-to-channel mapping. Nothing changes until an administrator presses **Apply**.
+
+- **Existing channels are adopted by ID.** A layout channel takes over the channel its keys already post to; channels are never matched by name.
+- **Nothing is deleted.** Channels the layout no longer uses move to a read-only Archive category with their history.
+- **Unrelated channels are left alone.** Channels that no key posts to are not moved, renamed or changed.
+- **Feeds are read-only.** Feed channels are read-only for members, the admin category is hidden, and the bot always keeps its own access.
+- **Changes take effect immediately.** The new mapping applies without a restart, and the run is logged.
+- **Everything can be undone.** A snapshot taken before the changes lets `/setup rollback` restore names, categories, order and permissions.
+
+`/setup routes` shows how many recent items each optional route would move out of its usual channel, before any route is turned on.
 
 ## Sources
 
@@ -185,6 +203,9 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 | `/channel set <category> <channel>` | Send a category of posts (news, kev, microsoft, digest...) to a different channel, effective immediately (moderators only) |
 | `/channel reset <category>` | Put a category back on the channel from the config file (moderators only) |
 | `/channel list` · `/channel check` | Every category with its channel and whether the bot can post there; `check` re-tests them (moderators only) |
+| `/setup layout` | Plan the category and channel layout, then apply it with a button (administrators only) |
+| `/setup rollback <run_id>` | Undo a layout run from its snapshot (administrators only) |
+| `/setup routes` | How many recent items each route would move, without changing anything (administrators only) |
 | `/digest now [hours] [post] [private]` | Build a digest for the last N hours and reply with it in the current channel, or post it to the digest channel (moderators only) |
 | `/digest status` | Next scheduled edition, enabled editions and the last run (moderators only) |
 | `/entity <name> [private]` | What the knowledge base knows about an actor, malware family or vendor, and recent items mentioning it |

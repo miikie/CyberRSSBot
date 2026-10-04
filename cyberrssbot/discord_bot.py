@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 
-from . import msrc, render
+from . import layout, msrc, render
 
 log = logging.getLogger("cyberrssbot.discord")
 
@@ -42,10 +42,20 @@ class Poster:
         return channel
 
     async def load_overrides(self, store) -> None:
-        self.configured = dict(self.channels)
+        if not hasattr(self, "configured"):
+            self.configured = dict(self.channels)
+        channels = dict(self.configured)
         for key, value in (await store.settings_get("channel:")).items():
-            if key in self.channels and str(value).isdigit():
-                self.channels[key] = int(value)
+            if str(value).isdigit():
+                channels[key] = int(value)
+        self.channels = channels
+
+    async def set_channels(self, store, mapping: dict[str, int]) -> dict[str, list[str]]:
+        for key, channel_id in mapping.items():
+            await store.setting_set("channel:" + key, str(int(channel_id)))
+            self.channels[key] = int(channel_id)
+            self._warned.discard(key)
+        return await self.validate_channels() if mapping else dict(self.problems)
 
     async def set_channel(self, store, key: str, channel_id: int | None) -> list[str]:
         if channel_id is None:
@@ -186,6 +196,43 @@ class Poster:
         return f"https://discord.com/channels/{guild.id}/{channel_id}/{message_id}" if guild else None
 
 
+def _chunks(text: str, limit: int = 3900) -> list[str]:
+    out, buf = [], ""
+    for line in text.split("\n"):
+        if buf and len(buf) + len(line) + 1 > limit:
+            out.append(buf)
+            buf = ""
+        buf = f"{buf}\n{line}" if buf else line
+    return out + ([buf] if buf else [])
+
+
+def is_admin(interaction: discord.Interaction) -> bool:
+    perms = getattr(interaction.user, "guild_permissions", None)
+    return bool(interaction.guild and perms and perms.administrator)
+
+
+class ApplyLayoutView(discord.ui.View):
+    def __init__(self, app, user_id: int, changes: int):
+        super().__init__(timeout=300)
+        self.app, self.user_id = app, user_id
+        self.apply_button.label = f"Apply {changes} change{'s' if changes != 1 else ''}"
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="Apply")
+    async def apply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id or not is_admin(interaction):
+            await interaction.response.send_message("Only the administrator who asked for this plan can apply it.",
+                                                    ephemeral=True)
+            return
+        button.disabled = True
+        self.stop()
+        await interaction.response.edit_message(view=self)
+        result = await layout.Applier(self.app, interaction.guild, self.app.cfg).apply()
+        text = render.layout_result_text(result)
+        for chunk in _chunks(text):
+            await interaction.followup.send(embed=discord.Embed(description=chunk), ephemeral=True)
+        await self.app.poster.send("log", embed=render.layout_log_embed(result), fallback=False)
+
+
 def register_commands(tree: app_commands.CommandTree, app) -> None:
     async def source_autocomplete(interaction: discord.Interaction, current: str):
         return [app_commands.Choice(name=s.id, value=s.id)
@@ -286,6 +333,56 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     tree.add_command(channel_group)
+
+    setup_group = app_commands.Group(name="setup", description="One-time server organisation",
+                                     default_permissions=discord.Permissions(administrator=True))
+
+    async def refuse(interaction: discord.Interaction) -> bool:
+        if is_admin(interaction):
+            return False
+        await interaction.response.send_message("Only server administrators can use /setup.", ephemeral=True)
+        return True
+
+    @setup_group.command(name="layout", description="Plan the channel and category layout; nothing changes until you confirm")
+    async def setup_layout(interaction: discord.Interaction):
+        if await refuse(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        stored = {k: int(v) for k, v in (await app.store.settings_get(layout.CATEGORY_PREFIX)).items()}
+        resolved = dict(app.poster.channels)
+        plan = layout.build_plan(app.cfg, interaction.guild, resolved, stored)
+        chunks = _chunks(layout.render_plan(plan, resolved, interaction.guild))
+        for index, chunk in enumerate(chunks):
+            last = index == len(chunks) - 1
+            view = ApplyLayoutView(app, interaction.user.id, plan.changes) if last and plan.changes else None
+            kwargs = {"view": view} if view else {}
+            await interaction.followup.send(embed=discord.Embed(description=f"```\n{chunk[:3980]}\n```"),
+                                            ephemeral=True, **kwargs)
+
+    @setup_group.command(name="rollback", description="Undo a /setup layout run from its snapshot")
+    @app_commands.describe(run_id="The run id shown when the layout was applied, e.g. layout-20261005T120000Z")
+    async def setup_rollback(interaction: discord.Interaction, run_id: str):
+        if await refuse(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            result = await layout.rollback(app, interaction.guild, run_id.strip())
+        except layout.LayoutError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        text = f"Rolled back `{result['run_id']}`:\n" + "\n".join(f"• {d}" for d in result["done"])
+        await interaction.followup.send(text[:1990], ephemeral=True)
+        await app.poster.send("log", content=text[:1990], fallback=False)
+
+    @setup_group.command(name="routes", description="How many recent items each route would move (changes nothing)")
+    async def setup_routes(interaction: discord.Interaction):
+        if await refuse(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        rows = await layout.route_preview(app)
+        await interaction.followup.send(embed=render.routes_embed(rows, 7), ephemeral=True)
+
+    tree.add_command(setup_group)
 
     digest_group = app_commands.Group(name="digest", description="Intelligence digests",
                                       default_permissions=discord.Permissions(manage_guild=True))

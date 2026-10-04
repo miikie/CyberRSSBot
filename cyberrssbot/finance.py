@@ -189,7 +189,7 @@ class FinanceEngine:
         self._recent.append({"id": fid, "ts": now, "tickers": set(tickers), "event": item["event"], "tokens": tokens})
         if seed:
             return
-        msg = await self.app.poster.send("finance", embed=render.finance_item_embed(data))
+        msg = await self.app.poster.send(item.get("channel") or "finance", embed=render.finance_item_embed(data))
         if msg:
             await store.fin_update(fid, channel_id=msg.channel.id, message_id=msg.id)
 

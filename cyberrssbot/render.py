@@ -279,6 +279,46 @@ def channels_embed(health: list[tuple[str, int, str]], overridden=frozenset()) -
     return embed
 
 
+def layout_result_text(result: dict) -> str:
+    head = (f"Layout `{result['run_id']}` applied." if result["ok"] else
+            f"Layout `{result['run_id']}` stopped partway: {result['error']}")
+    lines = [head, "", f"Done ({len(result['applied'])}):"] + [f"• {d}" for d in result["applied"]]
+    if result["ok"]:
+        problems = result.get("problems") or {}
+        lines += ["", "Channel check: " + ("every channel is usable." if not problems else
+                                           "; ".join(f"{k}: {', '.join(v)}" for k, v in problems.items()))]
+        lines += ["The new key → channel mapping is active now and written to layout-applied.yaml."]
+    lines += ["", f"Undo with `/setup rollback run_id:{result['run_id']}`."]
+    return "\n".join(lines)
+
+
+def layout_log_embed(result: dict) -> discord.Embed:
+    embed = discord.Embed(title=truncate(f"Server layout {result['run_id']}", 256),
+                          color=0x2E7D32 if result["ok"] else 0xC62828,
+                          description=_join_limit([f"• {d}" for d in result["applied"]], "\n", 3800) or "No changes.")
+    if not result["ok"]:
+        embed.add_field(name="Stopped", value=truncate(result["error"], 1000), inline=False)
+    embed.set_footer(text=f"Undo: /setup rollback run_id:{result['run_id']}")
+    return embed
+
+
+def routes_embed(rows: list[dict], days: int) -> discord.Embed:
+    embed = discord.Embed(title=f"Route preview · last {days} days", color=DIGEST_COLOR,
+                          description="How many posted items each route would have moved out of their usual "
+                                      "channel. Nothing is changed.")
+    for row in rows:
+        state = "on" if row["enabled"] else "off"
+        target = f"<#{row['target']}>" if row["target"] else "no channel set"
+        value = [f"Labels: {', '.join(row['labels'])} · {state} · to {target}",
+                 f"Would move **{row['count']}** item{'s' if row['count'] != 1 else ''}"
+                 + (f" from {', '.join('`' + k + '`' for k in row['from'])}" if row["from"] else "")]
+        value += [f"• {truncate(t, 90)}" for t in row["examples"]]
+        embed.add_field(name=row["route"], value=_join_limit(value, "\n"), inline=False)
+    if not rows:
+        embed.add_field(name="No routes", value="`routing:` is empty in the config.", inline=False)
+    return embed
+
+
 def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Embed:
     first = entities[0]
     embed = discord.Embed(title=truncate(first.name, 256), url=first.meta.get("url"), color=DIGEST_COLOR)

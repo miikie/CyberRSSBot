@@ -96,7 +96,7 @@ class SECEdgarSource(Source):
                 "title": f"{name} files {shown}: {label}",
                 "filing_label": f"{shown} · {label}",
                 "url": SEC_INDEX.format(cik=cik, acc_path=acc.replace("-", ""), acc=acc),
-                "source": "SEC EDGAR", "summary": "", "published": when.isoformat(),
+                "source": "SEC EDGAR", "summary": "", "published": when.isoformat(), "channel": self.channel,
             }, seed=quiet)
             count += 1
         return count
