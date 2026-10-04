@@ -5,6 +5,7 @@ import hashlib
 import html
 import logging
 import re
+import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -58,6 +59,7 @@ _WS_RE = re.compile(r"\s+")
 _SENTENCE_END_RE = re.compile(r"[.!?]+[\"”’')\]]*\s+")
 _DOMAIN_RE = re.compile(r"^[\w-]+(\.[\w-]+)*\.(com|net|org|io|co|uk|news|media)$", re.IGNORECASE)
 _ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_CLAUSE_RE = re.compile(r"[,;:(]|\.\s|\s[-–—]\s")
 _DATED_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MD_RE = re.compile(r"([\\*_`~|])")
 
@@ -186,6 +188,13 @@ def best_sentence(summary: str, title: str, kb, max_words: int = 40) -> str | No
     return " ".join(words[:max_words]).rstrip(",;:") + "…" if len(words) > max_words else best[1]
 
 
+def first_clause(text: str, max_words: int = 12) -> str:
+    text = _WS_RE.sub(" ", text or "").strip()
+    clause = _CLAUSE_RE.split(text, maxsplit=1)[0].strip().rstrip(".")
+    words = clause.split()
+    return " ".join(words[:max_words]) + "…" if len(words) > max_words else clause
+
+
 def emphasize(text: str, kb) -> str:
     out, pos = [], 0
     for start, end in extract(text, kb).spans:
@@ -310,7 +319,9 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
         pid = primary_id(d)
         refs = d.get("refs") or {}
         outlet = "NVD" if "NVD" in refs else next(iter(refs), "the CVE record")
-        label = d.get("title") or affected(d)
+        label = d.get("title") or affected(d) \
+            or next((kb.cwe[c.upper()] for c in d.get("cwe") or [] if c.upper() in kb.cwe), "") \
+            or first_clause(d.get("description") or "")
         ex, labels = intel.analyze(f"{pid} {label}", d.get("description") or "", kind="vuln", vuln=d)
         tags = []
         if d.get("cvss") is not None:
@@ -354,7 +365,8 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
         head = f"▸ **{link(md(headline), item['url'])}**"
         if item["tags"]:
             head += " · " + " · ".join(item["tags"])
-        sentence = best_sentence(item["summary"], headline, kb, max_words)
+        sentence = None if item["kind"] == "story" and item["source"] in intel.no_quote \
+            else best_sentence(item["summary"], headline, kb, max_words)
         lines = [head, f"“{emphasize(sentence, kb)}” (per {md(item['source'])})"] if sentence \
             else [f"{head} (per {md(item['source'])})"]
         seen, also = {item["source"]}, []
@@ -373,6 +385,7 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
             section_of.setdefault(label, section["key"])
 
     buckets: dict[str, list[dict]] = {s["key"]: [] for s in sections}
+    classified, unclassified = [], []
     for item in items:
         ordered = [l for l in priority if l in item["labels"]] + [l for l in item["labels"] if l not in priority]
         if item["kind"] == "story":
@@ -381,11 +394,21 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
             ordered = ["finance"]
         home = next((section_of[l] for l in ordered if l in section_of), None)
         if home is None:
-            stats["unclassified"] += 1
-        elif item["score"] < min_score:
+            unclassified.append(item)
+            continue
+        classified.append(item["score"])
+        if item["score"] < min_score:
             stats["below_cut"] += 1
         else:
             buckets[home].append(item)
+
+    other = {"enabled": True, "title": "Other notable", "top_n": 3, **(cfg.get("other") or {})}
+    notable = []
+    if other["enabled"] and classified:
+        median = statistics.median(classified)
+        notable = sorted((i for i in unclassified if i["kind"] == "story" and i["score"] > median
+                          and i["score"] >= min_score), key=lambda i: (-i["score"], i["sort"]))[:int(other["top_n"])]
+    stats["unclassified"] = len(unclassified) - len(notable)
 
     paragraphs: dict[str, list[str]] = {}
     if kev_new:
@@ -425,6 +448,9 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
             used[section["key"]] = min(len(ranked), limit)
         else:
             quiet.append(section["title"])
+    if notable:
+        blocks.append(Block(other["title"], [render_item(i) for i in notable]))
+        used["other"] = len(notable)
 
     sources = inputs.get("sources") or []
     failed = [s for s in sources if (s.get("fails") or 0) > 0]
@@ -529,10 +555,26 @@ class DigestRunner:
             embed = render.digest_embed(digest, message, index)
             if await poster.send(self.channel, embed=embed, fallback=False):
                 posted += 1
-        if not posted:
-            log.warning("digest %s was not posted: no '%s' channel configured", digest.run_id, self.channel)
+        if posted:
+            await self.app.store.mark_seen(["digest:" + digest.run_id], "digest")
+        else:
+            log.warning("digest %s was not posted: the '%s' channel is not set or failed the channel check",
+                        digest.run_id, self.channel)
         await poster.send("log", embed=render.digest_summary_embed(digest, posted), fallback=False)
         return posted
+
+    def upcoming(self, now: datetime) -> list[tuple[str, float, datetime]]:
+        out = []
+        for edition in self.cfg.get("editions") or DEFAULT_EDITIONS:
+            times = []
+            for stamp in edition.get("at_utc") or []:
+                hour, _, minute = str(stamp).partition(":")
+                moment = now.replace(hour=int(hour), minute=int(minute or 0), second=0, microsecond=0)
+                times.append(moment if moment > now else moment + timedelta(days=1))
+            if times:
+                hours = float(edition.get("hours", 6))
+                out.append((str(edition.get("name") or f"{hours:g}h"), hours, min(times)))
+        return sorted(out, key=lambda item: (item[2], item[0]))
 
     async def loop(self) -> None:
         store = self.app.store

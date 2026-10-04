@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import os
 import re
 import time
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +19,7 @@ from .http import FetchError
 ATTACK_URL = ("https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/"
               "enterprise-attack/enterprise-attack.json")
 MISP_ACTORS_URL = "https://raw.githubusercontent.com/MISP/misp-galaxy/main/clusters/threat-actor.json"
+CWE_URL = "https://cwe.mitre.org/data/csv/1000.csv.zip"
 KEV_URLS = ("https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
             "https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json")
 ATTACK_TIMEOUT = 300
@@ -38,6 +42,7 @@ VENDOR_CUES = frozenset("""
 TOKEN_RE = re.compile(r"[^\W_]+(?:[-.&+][^\W_]+)*")
 _BOUNDARY_RE = re.compile(r"[.!?:;|\n]")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_CWE_SHORT_RE = re.compile(r"\('([^']+)'\)\s*$")
 _PAREN_RE = re.compile(r"\([^)]*\)")
 _PRODUCT_SPLIT_RE = re.compile(r",\s*(?:and\s+)?|\s+and\s+|\s+&\s+")
 
@@ -138,6 +143,20 @@ def parse_misp_actors(body: bytes) -> dict:
     return {"version": str(data.get("version") or ""), "entities": entities}
 
 
+def parse_cwe(body: bytes) -> dict:
+    archive = zipfile.ZipFile(io.BytesIO(body))
+    member = next(n for n in archive.namelist() if n.lower().endswith(".csv"))
+    rows = csv.DictReader(io.StringIO(archive.read(member).decode("utf-8-sig")))
+    entities = []
+    for row in rows:
+        number, name = (row.get("CWE-ID") or "").strip(), (row.get("Name") or "").strip()
+        if number.isdigit() and name:
+            short = _CWE_SHORT_RE.search(name)
+            entities.append({"id": f"CWE-{number}", "name": short.group(1) if short else name, "full_name": name})
+    entities.sort(key=lambda e: int(e["id"][4:]))
+    return {"version": None, "entities": entities}
+
+
 def parse_kev(vulnerabilities: list[dict]) -> dict:
     vendors: dict[str, set[str]] = {}
     for vuln in vulnerabilities or []:
@@ -171,6 +190,7 @@ class KnowledgeBase:
         self.max_tokens = 1
         self.common: frozenset[str] = frozenset()
         self.vendor_tokens: frozenset[str] = frozenset()
+        self.cwe: dict[str, str] = {}
         self.status: dict[str, str] = {}
 
     def _cache(self, name: str) -> Path:
@@ -199,6 +219,8 @@ class KnowledgeBase:
         words = self.extras_dir / "common_words.txt"
         self.common = frozenset(w.strip().lower() for w in words.read_text(encoding="utf-8").split()) \
             if words.is_file() else frozenset()
+
+        self.cwe = {e["id"]: e["name"] for e in (self._read_cache("cwe") or {"entities": []})["entities"]}
 
         entities: list[Entity] = []
         actors: dict[str, Entity] = {}
@@ -349,9 +371,12 @@ class KnowledgeBase:
 
     async def _refresh_one(self, http, name: str, url: str, parse, timeout: float | None) -> str:
         cached = self._read_cache(name) or {}
-        headers = {"Accept": "application/json"}
-        if cached.get("etag") and cached.get("entities"):
-            headers["If-None-Match"] = cached["etag"]
+        headers = {"Accept": "application/json, application/zip, */*;q=0.5"}
+        if cached.get("entities"):
+            if cached.get("etag"):
+                headers["If-None-Match"] = cached["etag"]
+            if cached.get("last_modified"):
+                headers["If-Modified-Since"] = cached["last_modified"]
         fetched = await http.get(url, headers=headers, conditional=False, timeout=timeout)
         if fetched is None:
             self._write_cache(name, {**cached, "fetched": int(time.time())})
@@ -359,13 +384,15 @@ class KnowledgeBase:
         parsed = await asyncio.to_thread(parse, fetched.body)
         if not parsed["entities"]:
             raise FetchError(f"no entities found in {url}")
-        self._write_cache(name, {**parsed, "fetched": int(time.time()), "etag": fetched.etag, "url": url})
+        self._write_cache(name, {**parsed, "fetched": int(time.time()), "etag": fetched.etag,
+                                  "last_modified": fetched.last_modified, "url": url})
         return f"{len(parsed['entities'])} entities"
 
     async def refresh(self, http, *, force: bool = False) -> dict[str, str]:
         jobs = [("attack", self.cfg.get("attack_url") or ATTACK_URL, parse_attack, ATTACK_TIMEOUT)]
         if self.cfg.get("use_misp", True):
             jobs.append(("misp_actors", self.cfg.get("misp_actors_url") or MISP_ACTORS_URL, parse_misp_actors, None))
+        jobs.append(("cwe", self.cfg.get("cwe_url") or CWE_URL, parse_cwe, None))
         status = {}
         for name, url, parse, timeout in jobs:
             if not force and not self.stale(name):

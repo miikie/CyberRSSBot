@@ -34,6 +34,12 @@ class NullPoster:
     def jump_url(self, *args):
         return None
 
+    def usable(self, key: str) -> bool:
+        return True
+
+    def health(self) -> list:
+        return []
+
 
 class App:
     def __init__(self, cfg: dict, *, db_path: str | None = None):

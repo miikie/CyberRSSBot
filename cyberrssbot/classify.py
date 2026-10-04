@@ -37,7 +37,7 @@ _KEYWORDS = {
                              r"\bprivacy law\b|\bdata protection (?:law|authority|rules)\b|"
                              r"\bexecutive order\b|\bsanction(?:s|ed)\b|\bclass action\b|\blawsuit\b",
                              re.IGNORECASE),
-    "law-enforcement": re.compile(r"\bEuropol\b|\bInterpol\b|\bFBI\b|\bJustice Department\b|\bDOJ\b|"
+    "law-enforcement": re.compile(r"\bEuropol\b|\bInterpol\b|\bJustice Department\b|\bDOJ\b|"
                                   r"\bNational Crime Agency\b|\bpolice\b|\blaw enforcement\b|\btakedown\b|"
                                   r"\bseiz(?:ed|es|ure)\b|\bextradit\w+\b|\bsentenced\b|\bpleads? guilty\b|"
                                   r"\bprosecutors?\b|\bdismantl\w+\b", re.IGNORECASE),
@@ -122,6 +122,7 @@ class Intel:
         self.primary = {(s.get("name") or s["id"]) for s in sources if s.get("primary")}
         self.source_labels = {(s.get("name") or s["id"]): tuple(l for l in s.get("labels") or [] if l in LABELS)
                               for s in sources if s.get("labels")}
+        self.no_quote = {(s.get("name") or s["id"]) for s in sources if s.get("quote") is False}
         self.outlets = sorted({(s.get("name") or s["id"]) for s in sources}, key=lambda n: (-len(n), n))
 
     def watched(self, text: str) -> bool:
@@ -133,8 +134,8 @@ class Intel:
         ex = extract(text, self.kb)
         return ex, classify(text, ex, kind=kind, vuln=vuln, extra=self.source_labels.get(source, ()))
 
-    def route(self, labels: list[str], default: str) -> str:
+    def route(self, labels: list[str], default: str, usable=None) -> str:
         for channel, wanted in self.routes:
-            if wanted & set(labels):
+            if wanted & set(labels) and (usable is None or usable(channel)):
                 return channel
         return default

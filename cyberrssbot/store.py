@@ -269,6 +269,10 @@ class Store:
                                (start, end))
         return [json.loads(r["data"]) for r in rows]
 
+    async def digest_last(self) -> tuple[str, int] | None:
+        row = await self._one("SELECT key, ts FROM seen WHERE key LIKE 'digest:%' ORDER BY ts DESC, key DESC LIMIT 1")
+        return (row["key"].split(":", 1)[1], row["ts"]) if row else None
+
     async def stories_between(self, start: float, end: float) -> list[dict]:
         rows = await self._all("SELECT id, ts, data FROM stories WHERE ts>=? AND ts<? ORDER BY id",
                                (int(start), int(end)))

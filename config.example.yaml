@@ -98,15 +98,15 @@ finance:
     HACK: Amplify Cybersecurity ETF
     BUG: Global X Cybersecurity ETF
 
-# Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors and the
-# CISA KEV vendor/product list, plus the manual lists in `extras_dir`.
+# Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors, the
+# CISA KEV vendor/product list and MITRE's CWE names, plus the manual lists in `extras_dir`.
 kb:
   # Where the downloaded gazetteers are cached. The bot works offline from this cache if a refresh fails.
   cache_dir: kb_cache
   # Folder with the manual lists: actors.yaml, ransomware.yaml, regulators.yaml, countries.yaml, and
   # common_words.txt (names that are also ordinary words and so need exact case plus a cue word).
   extras_dir: kb
-  # Days between downloads of ATT&CK and the MISP actor list.
+  # Days between downloads of ATT&CK, the MISP actor list and the CWE list.
   refresh_days: 7
   # false = use ATT&CK only for threat actors.
   use_misp: true
@@ -159,6 +159,9 @@ digest:
     - {key: law-enforcement, title: Law enforcement,           labels: [law-enforcement]}
     - {key: policy,          title: Policy & law,              labels: [policy-law]}
     - {key: markets,         title: Markets,                   labels: [finance]}
+  # Stories that match no section. Shown under this title only when they score above the median
+  # score of the window's classified items; the rest are counted in the coverage section.
+  other: {enabled: true, title: Other notable, top_n: 3}
   # An item with several labels appears once, in the section of its highest-priority label.
   label_priority: [exploited, law-enforcement, policy-law, supply-chain, apt, malware, ransomware, breach,
                    vulnerability, finance]
@@ -233,6 +236,9 @@ sources:
   - {id: paloalto-psirt, primary: true, name: Palo Alto Networks, channel: advisories, interval: 3600,
      url: "https://security.paloaltonetworks.com/rss.xml"}
 
+  # Per-source digest options, usable on any source: `labels: [...]` adds topic labels to every item,
+  # `primary: true` marks a first-hand source, `quote: false` stops the digest quoting its summaries
+  # (used for ransomware.live, whose summaries are the gangs' own leak-site text).
   # Law-enforcement press releases. `labels: [law-enforcement]` adds that topic label to every item from the source;
   # `primary: true` marks a first-hand source for the digest score. DOJ, FBI and the NCA publish every
   # press release in one feed, so include_keywords keeps only the cyber-related ones.
@@ -279,7 +285,7 @@ sources:
      url: "https://feeds.feedburner.com/HaveIBeenPwnedLatestBreaches"}
 
   - {id: ransomware-live, name: ransomware.live, channel: ransomware, interval: 1800, cluster: false,
-     labels: [ransomware],
+     labels: [ransomware], quote: false,
      url: "https://www.ransomware.live/rss.xml"}
 
   - {id: anyrun,          name: ANY.RUN,          channel: malware, interval: 3600, url: "https://any.run/cybersecurity-blog/feed/"}

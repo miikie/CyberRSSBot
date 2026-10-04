@@ -237,6 +237,45 @@ def digest_summary_embed(digest, posted: int) -> discord.Embed:
     return embed
 
 
+def digest_status_embed(*, enabled: bool, channel: str, channel_ok: bool, upcoming: list[tuple[str, float, object]],
+                        last: tuple[str, int] | None) -> discord.Embed:
+    embed = discord.Embed(title="Digest status", color=DIGEST_COLOR)
+    if not enabled:
+        state = "Off (`digest.enabled` is false). `/digest now` still works."
+    elif not channel_ok:
+        state = f"On, but the `{channel}` channel is not set or failed the channel check, so nothing is posted."
+    else:
+        state = f"On, posting to the `{channel}` channel."
+    embed.add_field(name="Scheduled editions", value=state, inline=False)
+    if upcoming:
+        name, hours, moment = upcoming[0]
+        stamp = int(moment.timestamp())
+        embed.add_field(name="Next edition" if enabled else "Next edition (if enabled)",
+                        value=f"`{name}` ({hours:g}h window) <t:{stamp}:F> · <t:{stamp}:R>", inline=False)
+        lines = [f"`{n}` · {h:g}h window · next <t:{int(m.timestamp())}:t>" for n, h, m in upcoming]
+        embed.add_field(name=f"Editions ({len(upcoming)})", value=_join_limit(lines, "\n"), inline=False)
+    else:
+        embed.add_field(name="Editions", value="None configured.", inline=False)
+    embed.add_field(name="Last run", value=f"`{last[0]}` · <t:{last[1]}:R>" if last else "No run recorded yet.",
+                    inline=False)
+    return embed
+
+
+def channels_embed(health: list[tuple[str, int, str]]) -> discord.Embed:
+    lines = []
+    for key, channel_id, state in health:
+        if state == "unset":
+            lines.append(f"⚪ `{key}` not set")
+        elif state == "unchecked":
+            lines.append(f"⚪ `{key}` → <#{channel_id}> · not checked yet")
+        elif state == "ok":
+            lines.append(f"🟢 `{key}` → <#{channel_id}>")
+        else:
+            lines.append(f"🔴 `{key}` → <#{channel_id}> · {state} (posting disabled)")
+    return discord.Embed(title="Channel health", color=0x2B2D31,
+                         description=_join_limit(lines, "\n", 4000) or "No channels configured.")
+
+
 def entity_embed(entities: list, mentions: list[dict], days: int) -> discord.Embed:
     first = entities[0]
     embed = discord.Embed(title=truncate(first.name, 256), url=first.meta.get("url"), color=DIGEST_COLOR)

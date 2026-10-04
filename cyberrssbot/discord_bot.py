@@ -13,6 +13,9 @@ from . import msrc, render
 
 log = logging.getLogger("cyberrssbot.discord")
 
+REQUIRED_PERMISSIONS = (("view_channel", "View Channel"), ("send_messages", "Send Messages"),
+                        ("embed_links", "Embed Links"), ("attach_files", "Attach Files"))
+
 
 class Poster:
     def __init__(self, client: discord.Client, cfg: dict):
@@ -24,6 +27,9 @@ class Poster:
         self.microsoft_role = int(dc.get("microsoft_ping_role_id") or 0)
         self.lock = asyncio.Lock()
         self._warned: set[str] = set()
+        self.problems: dict[str, list[str]] = {}
+        self.checked = False
+        self._reported: dict[str, list[str]] | None = None
 
     async def _get(self, channel_id: int):
         channel = self.client.get_channel(channel_id)
@@ -35,8 +41,70 @@ class Poster:
                 return None
         return channel
 
+    def usable(self, key: str) -> bool:
+        return bool(self.channels.get(key)) and key not in self.problems
+
+    def health(self) -> list[tuple[str, int, str]]:
+        out = []
+        for key, channel_id in self.channels.items():
+            if not channel_id:
+                state = "unset"
+            elif not self.checked:
+                state = "unchecked"
+            else:
+                state = "; ".join(self.problems.get(key, [])) or "ok"
+            out.append((key, channel_id, state))
+        return out
+
+    async def validate_channels(self) -> dict[str, list[str]]:
+        problems: dict[str, list[str]] = {}
+        for key, channel_id in self.channels.items():
+            if not channel_id:
+                continue
+            channel = self.client.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.client.fetch_channel(channel_id)
+                except discord.HTTPException:
+                    problems[key] = ["channel not found, or the bot can't see it"]
+                    continue
+            me = getattr(getattr(channel, "guild", None), "me", None)
+            if me is None or not hasattr(channel, "permissions_for") or not hasattr(channel, "send"):
+                problems[key] = ["not a server text channel"]
+                continue
+            granted = channel.permissions_for(me)
+            missing = [f"missing {label}" for attr, label in REQUIRED_PERMISSIONS if not getattr(granted, attr, False)]
+            if missing:
+                problems[key] = missing
+        self.problems = problems
+        self.checked = True
+        for key, issues in problems.items():
+            for issue in issues:
+                log.error("channel '%s' (ID %s): %s", key, self.channels[key], issue)
+        if not problems:
+            log.info("channel check: all %d configured channels are usable",
+                     sum(1 for v in self.channels.values() if v))
+        return problems
+
+    async def report_channels(self) -> None:
+        if self._reported == self.problems or not self.usable("log"):
+            return
+        self._reported = dict(self.problems)
+        total = sum(1 for v in self.channels.values() if v)
+        if not self.problems:
+            await self.send("log", content=f"✅ Channel check: all {total} configured channels are usable.",
+                            fallback=False)
+            return
+        lines = [f"• channel '{key}' (ID {self.channels[key]}): {issue}"
+                 for key, issues in self.problems.items() for issue in issues]
+        text = (f"⚠️ Channel check: {len(self.problems)} of {total} configured channels have problems. "
+                "Posting to those keys is disabled until it is fixed.\n" + "\n".join(lines))
+        await self.send("log", content=text[:1990], fallback=False)
+
     async def _resolve(self, key: str, fallback: bool):
-        channel_id = self.channels.get(key) or (self.channels.get("default") if fallback else 0)
+        channel_id = self.channels.get(key) if key not in self.problems else 0
+        if not channel_id and fallback and "default" not in self.problems:
+            channel_id = self.channels.get("default")
         if not channel_id:
             if fallback and key not in self._warned:
                 log.warning("no channel configured for '%s' (and no default) — those posts are dropped", key)
@@ -106,7 +174,8 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
     @tree.command(name="status", description="Health of every feed source")
     async def status(interaction: discord.Interaction):
         states = {row["id"]: row for row in await app.store.all_sources()}
-        await interaction.response.send_message(embeds=render.status_embeds(app.sources, states), ephemeral=True)
+        embeds = render.status_embeds(app.sources, states)[:9] + [render.channels_embed(app.poster.health())]
+        await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
     @tree.command(name="cve", description="Show everything the bot has merged for a CVE / GHSA id")
     @app_commands.describe(vuln_id="e.g. CVE-2026-12345 or GHSA-xxxx-xxxx-xxxx")
@@ -143,24 +212,35 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         attachment = discord.File(io.BytesIO(msrc.kb_tsv(data)), filename=msrc.tsv_name(kb_id))
         await interaction.response.send_message(embed=render.kb_embed(data), file=attachment, ephemeral=True)
 
-    @tree.command(name="digest", description="Build an intelligence digest for the last N hours")
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(mode="now: build a digest ending at this minute",
-                           hours="Length of the window in hours (default 6)",
+    digest_group = app_commands.Group(name="digest", description="Intelligence digests",
+                                      default_permissions=discord.Permissions(manage_guild=True))
+
+    @digest_group.command(name="status", description="Next scheduled edition, last run and enabled editions")
+    async def digest_status(interaction: discord.Interaction):
+        runner = app.digest
+        embed = render.digest_status_embed(
+            enabled=bool(runner.cfg.get("enabled")), channel=runner.channel,
+            channel_ok=app.poster.usable(runner.channel), upcoming=runner.upcoming(datetime.now(timezone.utc)),
+            last=await app.store.digest_last())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @digest_group.command(name="now", description="Build an intelligence digest for the last N hours")
+    @app_commands.describe(hours="Length of the window in hours (default 6)",
                            post="Post it to the digest channel instead of previewing it privately")
-    @app_commands.choices(mode=[app_commands.Choice(name="now", value="now")])
-    async def digest(interaction: discord.Interaction, mode: str = "now",
-                     hours: app_commands.Range[int, 1, 168] = 6, post: bool = False):
+    async def digest_now(interaction: discord.Interaction, hours: app_commands.Range[int, 1, 168] = 6,
+                         post: bool = False):
         await interaction.response.defer(ephemeral=True, thinking=True)
         built = await app.digest.build(float(hours), datetime.now(timezone.utc), "on-demand")
         if post:
             posted = await app.digest.post(built)
             note = f"Posted {posted} of {len(built.messages)} messages for run `{built.run_id}`." if posted else \
-                f"Nothing was posted: no `{app.digest.channel}` channel is configured."
+                f"Nothing was posted: the `{app.digest.channel}` channel is not set or failed the channel check."
             await interaction.followup.send(note, ephemeral=True)
             return
         for index, message in enumerate(built.messages[:10]):
             await interaction.followup.send(embed=render.digest_embed(built, message, index), ephemeral=True)
+
+    tree.add_command(digest_group)
 
     @tree.command(name="entity", description="What the knowledge base knows about an actor, malware family or vendor")
     @app_commands.describe(name="e.g. APT29, Storm-2603, LockBit, Cobalt Strike")
@@ -232,6 +312,11 @@ class CyberRSSBotClient(discord.Client):
     async def on_ready(self) -> None:
         log.info("logged in as %s — %d sources scheduled", self.user, len(self.app.sources))
         self.app.poster.check_roles()
+        try:
+            await self.app.poster.validate_channels()
+            await self.app.poster.report_channels()
+        except Exception:
+            log.exception("channel check failed")
 
     async def close(self) -> None:
         await self.app.close()

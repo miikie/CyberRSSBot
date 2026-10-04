@@ -30,7 +30,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Signal over volume.** Vulnerabilities are filtered by CVSS, EPSS, KEV and a vendor watchlist. High-volume CNAs and WordPress plugin noise are muted.
 - **Controlled first run.** A new source records its backlog without posting it, optionally posting only the last few hours so channels start populated without being flooded.
 - **Polite fetching.** Per-host pacing, ETag / Last-Modified conditional requests, `Retry-After` support and exponential backoff per source.
-- **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel.
+- **Self-monitoring.** `/status` shows the health of every source, and repeated failures and recoveries are reported to a log channel. At startup every configured channel is checked for existence and permissions; a channel that fails is reported and skipped instead of crashing the bot.
 - **Scraper for feedless sites.** Any page can become a source with a CSS selector.
 - **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
 - **Deterministic digests.** Scheduled summaries built by rules from public reference data, with a coverage section that says what was and wasn't checked.
@@ -69,7 +69,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 | Finance | SEC EDGAR, Finnhub, Cloudflare and Gen Digital investor relations, GlobeNewswire, Business Wire |
 | Microsoft | MSRC CVRF release documents, Windows release information on Microsoft Learn |
 | Law enforcement | US Department of Justice, Europol |
-| Reference data | MITRE ATT&CK, MISP galaxy, CISA KEV |
+| Reference data | MITRE ATT&CK, MITRE CWE, MISP galaxy, CISA KEV |
 
 ## Microsoft security updates
 
@@ -111,20 +111,20 @@ An item is a cleaned headline linking to the source, one sentence quoted from th
 
 Structured data gets short generated paragraphs: additions to CISA KEV, Windows update statistics from the Microsoft tracker, and the biggest movers on the stock watchlist.
 
-Every digest ends with a **Coverage & limitations** section built from the run itself: how many sources were checked and which failed and why, how many raw items became how many clustered stories, and how many were dated outside the window. Sections with nothing to show are listed there as "no qualifying items from checked sources" rather than implying that nothing happened. Long digests are split across messages at section boundaries, never in the middle of an item. A run summary goes to the log channel.
+Every digest ends with a **Coverage & limitations** section built from the run itself: how many sources were checked and which failed and why, how many raw items became how many clustered stories, and how many were dated outside the window. Stories that fit no section but score above the window's median appear under **Other notable**; the rest are counted. Sections with nothing to show are listed there as "no qualifying items from checked sources" rather than implying that nothing happened. Long digests are split across messages at section boundaries, never in the middle of an item. A run summary goes to the log channel.
 
 ### How items are understood
 
 | Step | What it does |
 |---|---|
-| **Knowledge base** | MITRE ATT&CK groups and software, MISP galaxy threat actors and the CISA KEV vendor and product list, refreshed weekly and cached on disk, plus hand-maintained lists of ransomware groups, regulators and laws, and countries. Aliases resolve to one entity: NOBELIUM and Dark Halo are APT29 |
+| **Knowledge base** | MITRE ATT&CK groups and software, MISP galaxy threat actors, the CISA KEV vendor and product list and MITRE's CWE names, refreshed weekly and cached on disk, plus hand-maintained lists of ransomware groups, regulators and laws, and countries. Aliases resolve to one entity: NOBELIUM and Dark Halo are APT29 |
 | **Extraction** | Threat actors, malware, vendors, products, regulators, countries, CVE ids, money amounts, victim, record and device counts, and action verbs such as arrested, indicted, exploited, breached, patched, fined and acquired |
 | **Labels** | exploited, vulnerability, ransomware, breach, apt, malware, supply-chain, policy-law, law-enforcement, finance. An item can carry several |
 | **Score** | Outlets covering the story, KEV status, CVSS, watchlist vendors, named actors or malware, extracted figures and first-hand sources all add to it; it decays with age |
 
 Matching is word-based and case-aware. Names that are also ordinary words, such as Play, Royal or Progress, only match in the right case and context, so "Play ransomware gang" is the group and "Google Play Store" is not.
 
-Labels can also route new posts to dedicated channels such as an APT tracker or a supply-chain channel. Routing is off by default and an item is still posted once.
+Labels can also route new posts to dedicated channels such as an APT tracker or a supply-chain channel. Routing is off by default. A routed item is moved, not copied: it is posted once, in the route's channel, and later coverage is merged into that post. If a route's channel is missing or lacks permissions, the item goes to its normal channel.
 
 DOJ and Europol press releases are followed as law-enforcement sources, filtered to cyber-related items.
 
@@ -177,11 +177,12 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 
 | Command | Description |
 |---|---|
-| `/status` | Health of every source: last success, item count and last error |
+| `/status` | Health of every source (last success, item count, last error) and of every configured channel |
 | `/cve <id>` | The merged card for any tracked CVE or GHSA id |
 | `/kb <number>` | The stored card and CVE list for a tracked Windows security update |
 | `/poll <source>` | Poll a source immediately (moderators only) |
 | `/digest now [hours] [post]` | Build a digest for the last N hours as a private preview, or post it (moderators only) |
+| `/digest status` | Next scheduled edition, enabled editions and the last run (moderators only) |
 | `/entity <name>` | What the knowledge base knows about an actor, malware family or vendor, and recent items mentioning it |
 | `/stock <ticker>` | Latest quote and the last 5 finance items for a watchlist ticker |
 | `/earnings` | Upcoming watchlist earnings over the next 14 days |

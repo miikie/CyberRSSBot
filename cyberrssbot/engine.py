@@ -174,7 +174,7 @@ class VulnEngine:
         intel = self.app.intel
         if key == "vulns" and intel.routes:
             key = intel.route(intel.analyze(d.get("title") or "", d.get("description") or "", kind="vuln",
-                                            vuln=d)[1], key)
+                                            vuln=d)[1], key, self.app.poster.usable)
         msg = await self.app.poster.send(key, embed=render.vuln_embed(d), ping_kev=bool(d.get("kev")))
         if msg:
             await self.app.store.vuln_set_post(vid, 1, msg.channel.id, msg.id)
@@ -236,7 +236,7 @@ class StoryEngine:
 
         if not seed and self.app.intel.routes:
             _, labels = self.app.intel.analyze(item["title"], item.get("summary", ""), source=item["source"])
-            channel_key = self.app.intel.route(labels, channel_key)
+            channel_key = self.app.intel.route(labels, channel_key, self.app.poster.usable)
         data = {
             "title": item["title"], "url": item["url"], "source": item["source"],
             "summary": item.get("summary", ""), "published": item.get("published"),
