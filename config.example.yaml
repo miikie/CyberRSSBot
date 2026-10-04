@@ -55,6 +55,9 @@ network:
     api.first.org: 2.0
     data.sec.gov: 0.25
     finnhub.io: 1.1
+    www.sec.gov: 0.25
+    efts.sec.gov: 0.5
+    query1.finance.yahoo.com: 1.0
 
 dedup:
   story_window_hours: 72
@@ -107,6 +110,16 @@ finance:
     CIBR: First Trust NASDAQ Cybersecurity ETF
     HACK: Amplify Cybersecurity ETF
     BUG: Global X Cybersecurity ETF
+  # Market-wide cybersecurity incident disclosures (the sec_incidents source).
+  incidents:
+    # An 8-K Item 8.01 counts as a voluntary cyber disclosure when its 8.01 section contains one of these.
+    keywords_8_01: ["cybersecurity incident", "cyber incident", "cyberattack", "cyber-attack", "cyber attack",
+                    "ransomware", "unauthorized access", "unauthorized third party", "threat actor",
+                    "data security incident", "information security incident", "network security incident"]
+  events:
+    # Once, in the background after startup: 8-K 1.05 history since 2023-12-18 and 8.01 cyber filings from
+    # SEC full-text search, KEV history for exposure vendors, and 3 years of watchlist earnings 8-Ks.
+    backfill: true
 
 # Server layout used by /setup layout (Administrator only). The command shows a plan first and changes nothing
 # until its button is pressed. Channels are matched by the channel id their keys already point at, never by
@@ -154,6 +167,32 @@ layout:
       private: true
       channels:
         - {name: bot-log,              keys: [log]}
+
+# Vendors whose products live inside a bigger listed company. KEV entries and critical vulnerabilities for these
+# vendors become events for the ticker, used only for event studies and signals: nothing is posted for them.
+# Names are matched against the KEV vendorProject and NVD vendor fields, ignoring case and spaces. Every
+# finance watchlist company is added automatically. Vendors listed under `private` have no listed parent.
+exposure:
+  vendors:
+    microsoft: MSFT
+    cisco: CSCO
+    oracle: ORCL
+    sap: SAP
+    apple: AAPL
+    google: GOOGL
+    chrome: GOOGL
+    chromium: GOOGL
+    android: GOOGL
+    vmware: AVGO
+    broadcom: AVGO
+    juniper: HPE
+    juniper networks: HPE
+    atlassian: TEAM
+    gitlab: GTLB
+    palo alto networks: PANW
+    check point: CHKP
+    f5: FFIV
+  private: [ivanti, citrix, cloud software group, sonicwall]
 
 # Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors, the
 # CISA KEV vendor/product list and MITRE's CWE names, plus the manual lists in `extras_dir`.
@@ -357,6 +396,13 @@ sources:
   - {id: malwarebytes,    name: Malwarebytes Labs, channel: malware, interval: 3600,
      url: "https://www.malwarebytes.com/blog/feed/index.xml"}
 
+  # Market-wide 8-K Item 1.05 incidents and 8.01 cyber disclosures, from EDGAR's latest-filings feed.
+  - {id: sec-incidents, type: sec_incidents, name: SEC incident disclosures, channel: finance-incidents,
+     interval: 600, idle_interval: 3600}
+  # Daily prices (Yahoo chart API, adjusted closes) for the watchlist, benchmarks, exposure tickers and every
+  # ticker that appears in an event. Refreshed after each close; posts nothing.
+  - {id: prices, type: prices, name: Daily prices, channel: finance-tape, history_years: 3,
+     refresh_minutes_after_close: 75}
   - {id: sec-edgar,    type: sec_edgar,    name: SEC EDGAR,         channel: finance-filings, interval: 600, idle_interval: 3600}
   - {id: fin-quotes,   type: quotes,       name: Finnhub quotes,    channel: finance-tape, interval: 900}
   - {id: fin-earnings, type: earnings,     name: Finnhub earnings,  channel: finance-earnings, interval: 1800}

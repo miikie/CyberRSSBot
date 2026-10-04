@@ -7,6 +7,7 @@ NY = ZoneInfo("America/New_York")
 OPEN = time(9, 30)
 CLOSE = time(16, 0)
 EARLY_CLOSE = time(13, 0)
+ONE_OFF_CLOSURES = (date(2025, 1, 9),)
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
@@ -62,6 +63,9 @@ def nyse_holidays(year: int) -> dict[date, time | None]:
     for eve in (date(year, 7, 3), date(year, 12, 24)):
         if eve.weekday() <= 3 and eve not in days:
             days[eve] = EARLY_CLOSE
+    for closed in ONE_OFF_CLOSURES:
+        if closed.year == year:
+            days[closed] = None
     return days
 
 

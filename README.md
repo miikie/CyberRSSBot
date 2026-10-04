@@ -55,7 +55,7 @@ Channels are grouped into categories. Each row is one channel; the keys are the 
 | Cyber-Finance | cyber-markets | Press releases, investor relations and newswire items for the watchlist |
 | Cyber-Finance | market-tape | The daily close summary and big-move alerts |
 | Cyber-Finance | sec-filings | Watchlist SEC filings |
-| Cyber-Finance | incident-disclosures | Market-wide 8-K cybersecurity incident disclosures |
+| Cyber-Finance | incident-disclosures | Market-wide 8-K Item 1.05 incidents and Item 8.01 cyber disclosures, plus compact cards when a leak-site claim or a widely covered breach names a listed company |
 | Cyber-Finance | earnings | The earnings calendar and same-day reminders |
 | Cyber-Finance | signals | Signals and evidence reports |
 | Admin (private) | bot-log | Source failures and recoveries, channel checks, digest and layout runs |
@@ -85,7 +85,7 @@ Channels are grouped into categories. Each row is one channel; the keys are the 
 | Data breaches | DataBreaches.net, Have I Been Pwned |
 | Ransomware | ransomware.live |
 | Malware | ANY.RUN, Malware Traffic Analysis, Malpedia, Malwarebytes Labs |
-| Finance | SEC EDGAR, Finnhub, Cloudflare and Gen Digital investor relations, GlobeNewswire, Business Wire |
+| Finance | SEC EDGAR (watchlist filings, the market-wide latest-filings feed and full-text search), Yahoo daily prices, Finnhub, Cloudflare and Gen Digital investor relations, GlobeNewswire, Business Wire |
 | Microsoft | MSRC CVRF release documents, Windows release information on Microsoft Learn |
 | Law enforcement | US Department of Justice, Europol |
 | Reference data | MITRE ATT&CK, MITRE CWE, MISP galaxy, CISA KEV |
@@ -200,6 +200,8 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 |---|---|
 | `/status` | Health of every source (last success, item count, last error) and of every configured channel |
 | `/cve <id>` | The merged card for any tracked CVE or GHSA id |
+| `/study <type> [window] [ticker]` | Abnormal returns after a type of event: mean, median, hit rate, t-statistic and a bootstrap confidence interval |
+| `/events <ticker> [days]` | Timeline of recorded events for a ticker |
 | `/kb <number>` | The stored card and CVE list for a tracked Windows security update |
 | `/poll <source>` | Poll a source immediately (moderators only) |
 | `/channel set <category> <channel>` | Send a category of posts (news, kev, microsoft, digest...) to a different channel, effective immediately (moderators only) |

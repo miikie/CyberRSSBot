@@ -51,6 +51,18 @@ CREATE INDEX IF NOT EXISTS idx_ms_kbs_doc ON ms_kbs(doc);
 CREATE TABLE IF NOT EXISTS ms_kb_cves (cve TEXT, kb TEXT, PRIMARY KEY(cve, kb));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, description TEXT, applied INTEGER);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, ticker TEXT NOT NULL DEFAULT '', cik INTEGER,
+    company TEXT, occurred_at TEXT NOT NULL, effective_session TEXT NOT NULL, session_timing TEXT NOT NULL,
+    confidence REAL, source_refs TEXT, payload TEXT, dedup_key TEXT NOT NULL, created_at INTEGER,
+    UNIQUE(type, ticker, dedup_key));
+CREATE INDEX IF NOT EXISTS idx_events_ticker ON events(ticker, effective_session);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, effective_session);
+CREATE TABLE IF NOT EXISTS prices (
+    symbol TEXT NOT NULL, date TEXT NOT NULL, open REAL, high REAL, low REAL, close REAL, adj_close REAL,
+    volume INTEGER, source TEXT, PRIMARY KEY(symbol, date));
+CREATE TABLE IF NOT EXISTS price_splits (symbol TEXT NOT NULL, date TEXT NOT NULL, ratio REAL, PRIMARY KEY(symbol, date));
+CREATE TABLE IF NOT EXISTS event_returns (event_id INTEGER PRIMARY KEY, data TEXT NOT NULL, computed INTEGER);
 CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
 
@@ -84,23 +96,27 @@ class Store:
         self.db.row_factory = aiosqlite.Row
         await self.db.executescript(SCHEMA)
         await self.db.commit()
+        self.existed = existed
         await self.migrate(existed)
 
     async def schema_version(self) -> int:
         row = await self._one("SELECT MAX(version) AS v FROM schema_version")
         return int(row["v"] or 0)
 
-    async def migrate(self, existed: bool = True) -> list[int]:
-        current = await self.schema_version()
-        pending = [m for m in MIGRATIONS if m[0] > current]
+    async def applied_migrations(self) -> set[int]:
+        return {r["version"] for r in await self._all("SELECT version FROM schema_version")}
+
+    async def migrate(self, existed: bool = True, migrations=None, context=None) -> list[int]:
+        applied = await self.applied_migrations()
+        pending = [m for m in (MIGRATIONS if migrations is None else migrations) if m[0] not in applied]
         if not pending:
             return []
-        if existed:
+        if existed and not getattr(self, "backup_path", None):
             self.backup_path = await self.backup()
             log.info("database backed up to %s before migration %s", self.backup_path,
                      ", ".join(str(m[0]) for m in pending))
         for version, description, step in pending:
-            await step(self.db)
+            await step(self.db if context is None else context)
             await self.db.execute("INSERT INTO schema_version(version, description, applied) VALUES (?,?,?)",
                                   (version, description, int(time.time())))
             await self.db.commit()
@@ -478,6 +494,97 @@ class Store:
     async def ms_release_get(self, kb: str) -> tuple[str, str] | None:
         row = await self._one("SELECT date, type FROM ms_releases WHERE kb=? ORDER BY date LIMIT 1", (kb,))
         return (row["date"], row["type"]) if row else None
+
+    @staticmethod
+    def _event(row) -> dict:
+        out = dict(row)
+        out["source_refs"] = json.loads(out["source_refs"] or "{}")
+        out["payload"] = json.loads(out["payload"] or "{}")
+        return out
+
+    async def event_put(self, ev: dict) -> tuple[int, bool]:
+        cur = await self.db.execute(
+            "INSERT OR IGNORE INTO events(type, ticker, cik, company, occurred_at, effective_session, session_timing, "
+            "confidence, source_refs, payload, dedup_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ev["type"], ev["ticker"], ev["cik"], ev["company"], ev["occurred_at"], ev["effective_session"],
+             ev["session_timing"], ev["confidence"], json.dumps(ev["source_refs"], sort_keys=True),
+             json.dumps(ev["payload"], sort_keys=True), ev["dedup_key"], ev["created_at"]))
+        await self.db.commit()
+        if cur.rowcount:
+            return cur.lastrowid, True
+        row = await self._one("SELECT id FROM events WHERE type=? AND ticker=? AND dedup_key=?",
+                              (ev["type"], ev["ticker"], ev["dedup_key"]))
+        return row["id"], False
+
+    async def event_get(self, event_id: int) -> dict | None:
+        row = await self._one("SELECT * FROM events WHERE id=?", (event_id,))
+        return self._event(row) if row else None
+
+    async def event_merge_refs(self, event_id: int, refs: dict) -> None:
+        current = await self.event_get(event_id)
+        if current is None:
+            return
+        merged = {**current["source_refs"], **refs}
+        await self._exec("UPDATE events SET source_refs=? WHERE id=?", (json.dumps(merged, sort_keys=True), event_id))
+
+    async def events_query(self, *, type_: str | None = None, ticker: str | None = None, cik: int | None = None,
+                           since: str | None = None, until: str | None = None) -> list[dict]:
+        sql, args = "SELECT * FROM events WHERE 1=1", []
+        for column, value in (("type", type_), ("ticker", ticker.upper() if ticker else None), ("cik", cik)):
+            if value is not None:
+                sql += f" AND {column}=?"
+                args.append(value)
+        if since:
+            sql += " AND effective_session>=?"
+            args.append(since)
+        if until:
+            sql += " AND effective_session<=?"
+            args.append(until)
+        rows = await self._all(sql + " ORDER BY effective_session, occurred_at, id", args)
+        return [self._event(r) for r in rows]
+
+    async def event_counts(self) -> dict[str, int]:
+        rows = await self._all("SELECT type, COUNT(*) AS n FROM events GROUP BY type ORDER BY type")
+        return {r["type"]: r["n"] for r in rows}
+
+    async def event_tickers(self) -> list[str]:
+        rows = await self._all("SELECT DISTINCT ticker FROM events WHERE ticker!='' ORDER BY ticker")
+        return [r["ticker"] for r in rows]
+
+    async def prices_put(self, symbol: str, rows: list[dict], source: str) -> None:
+        await self.db.executemany(
+            "INSERT INTO prices(symbol, date, open, high, low, close, adj_close, volume, source) VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(symbol, date) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, "
+            "close=excluded.close, adj_close=excluded.adj_close, volume=excluded.volume, source=excluded.source",
+            [(symbol.upper(), r["date"], r.get("open"), r.get("high"), r.get("low"), r.get("close"), r.get("adj_close"),
+              r.get("volume"), source) for r in rows])
+        await self.db.commit()
+
+    async def prices_for(self, symbol: str) -> list[dict]:
+        rows = await self._all("SELECT date, open, high, low, close, adj_close, volume FROM prices WHERE symbol=? "
+                               "ORDER BY date", (symbol.upper(),))
+        return [dict(r) for r in rows]
+
+    async def price_bounds(self) -> dict[str, tuple[str, str, int]]:
+        rows = await self._all("SELECT symbol, MIN(date) AS a, MAX(date) AS b, COUNT(*) AS n FROM prices GROUP BY symbol")
+        return {r["symbol"]: (r["a"], r["b"], r["n"]) for r in rows}
+
+    async def splits_put(self, symbol: str, splits: list[tuple[str, float]]) -> None:
+        await self.db.executemany("INSERT OR REPLACE INTO price_splits(symbol, date, ratio) VALUES (?,?,?)",
+                                  [(symbol.upper(), d, r) for d, r in splits])
+        await self.db.commit()
+
+    async def splits_for(self, symbol: str) -> dict[str, float]:
+        rows = await self._all("SELECT date, ratio FROM price_splits WHERE symbol=?", (symbol.upper(),))
+        return {r["date"]: r["ratio"] for r in rows}
+
+    async def event_return_get(self, event_id: int) -> dict | None:
+        row = await self._one("SELECT data FROM event_returns WHERE event_id=?", (event_id,))
+        return json.loads(row["data"]) if row else None
+
+    async def event_return_put(self, event_id: int, data: dict) -> None:
+        await self._exec("INSERT OR REPLACE INTO event_returns(event_id, data, computed) VALUES (?,?,?)",
+                         (event_id, json.dumps(data, sort_keys=True), int(time.time())))
 
     async def prune(self) -> None:
         now = int(time.time())

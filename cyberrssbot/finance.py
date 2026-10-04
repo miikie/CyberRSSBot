@@ -186,6 +186,8 @@ class FinanceEngine:
         if item["kind"] == "filing":
             data["filings"].append({"label": item["filing_label"], "url": item["url"]})
         fid = await store.fin_insert(now, data["tickers"], item["event"], tokens, data)
+        if item["event"] == "mna":
+            await self._mna_events(fid, data, data["tickers"])
         self._recent.append({"id": fid, "ts": now, "tickers": set(tickers), "event": item["event"], "tokens": tokens})
         if seed:
             return
@@ -210,9 +212,17 @@ class FinanceEngine:
             if item["url"] not in urls and item["source"] not in sources:
                 data["also"].append({"source": item["source"], "url": item["url"]})
                 changed = True
+        if changed and data.get("event") == "mna":
+            await self._mna_events(row["id"], data, merged)
         if changed:
             await self.app.store.fin_update(row["id"], data=data, tickers=merged,
                                             dirty=1 if row["message_id"] else None)
+
+    async def _mna_events(self, fid: int, data: dict, tickers) -> None:
+        when = data.get("published") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for ticker in tickers:
+            await self.app.events.record("mna.announce", ticker=ticker, occurred_at=when, dedup=f"fin:{fid}",
+                                         refs={"url": data["url"]}, payload={"title": data["title"], "role": "unknown"})
 
     async def ingest_feed_item(self, src, entry: dict, seed: bool) -> None:
         text = f"{entry['title']} {entry['summary']}"

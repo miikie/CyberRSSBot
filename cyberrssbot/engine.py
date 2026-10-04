@@ -151,6 +151,9 @@ class VulnEngine:
         if merged.get("kev") and ("kev" in changes or row is None):
             merged["kev"] = {**merged["kev"], "seen": int(time.time())}
         await store.vuln_put(vid, merged, [vid, *merged["aliases"]])
+        if (merged.get("kev") or (merged.get("cvss") or 0) >= 9) and changes:
+            from .backfill import vuln_events
+            await vuln_events(self.app, merged)
 
         if row is None:
             if seed:
@@ -221,6 +224,8 @@ class StoryEngine:
                 if item["source"] not in outlets:
                     data["also"].append({"source": item["source"], "url": item["url"]})
                     await store.story_update(sid, data=data, dirty=1)
+                    post = [row["channel_id"], row["message_id"]] if row.get("message_id") else None
+                    await self.app.incidents.story_merged(sid, data, post)
                 return
 
         if self.fold and cves:
@@ -251,7 +256,9 @@ class StoryEngine:
         for cve in cves:
             await self.app.vulns.attach_news(cve, item)
         if seed:
+            await self.app.incidents.story_posted(sid, data, None, True)
             return
         msg = await self.app.poster.send(channel_key, embed=render.story_embed(data))
         if msg:
             await store.story_update(sid, channel_id=msg.channel.id, message_id=msg.id)
+        await self.app.incidents.story_posted(sid, data, msg, False)

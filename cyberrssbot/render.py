@@ -514,3 +514,121 @@ def stock_embed(symbol: str, name: str, quote: tuple[dict, int] | None, items: l
         embed.add_field(name="Recent finance items", value=_join_limit(lines, "\n"), inline=False)
     embed.set_footer(text=FIN_FOOTER)
     return embed
+
+
+INCIDENT_COLOR = 0xB71C1C
+TIMING_TEXT = {"pre": "before the open", "intraday": "during the session", "post": "after the close",
+               "closed": "while the market was closed"}
+INCIDENT_TITLES = {"sec.8k.1_05": "8-K Item 1.05 · material cybersecurity incident",
+                   "sec.8k.1_05_amendment": "8-K/A · Item 1.05 update",
+                   "sec.8k.8_01_cyber": "8-K Item 8.01 · cyber disclosure"}
+
+
+def _who(ev: dict) -> str:
+    name = ev.get("company") or "Unknown filer"
+    return f"{name} ({ev['ticker']})" if ev.get("ticker") else name
+
+
+def _when(ev: dict) -> str:
+    occurred = parse_time(ev["occurred_at"])
+    stamp = f"<t:{int(occurred.timestamp())}:f>" if occurred else ev["occurred_at"]
+    return (f"{stamp} · {TIMING_TEXT.get(ev['session_timing'], ev['session_timing'])} · "
+            f"session {ev['effective_session']}")
+
+
+def incident_embed(ev: dict, original_jump: str | None = None, history: str | None = None) -> discord.Embed:
+    from . import incidents
+    payload, refs = ev["payload"], ev["source_refs"]
+    embed = discord.Embed(title=truncate(f"{_who(ev)} · {INCIDENT_TITLES.get(ev['type'], ev['type'])}", 256),
+                          url=refs.get("filing") or refs.get("document"), color=INCIDENT_COLOR,
+                          description=history)
+    listing = ev["ticker"] or "No listed equity"
+    if payload.get("exchange"):
+        listing += f" · {payload['exchange']}"
+    embed.add_field(name="Ticker", value=listing)
+    embed.add_field(name="Form", value=f"{payload.get('form', '8-K')} · items {', '.join(payload.get('items') or [])}")
+    embed.add_field(name="Filed", value=_when(ev), inline=False)
+    found = incidents.badges(payload.get("features") or {}, payload.get("amendments") or 0)
+    embed.add_field(name="Disclosed", value=" · ".join(f"`{b}`" for b in found) or "No severity markers found",
+                    inline=False)
+    if payload.get("keywords"):
+        embed.add_field(name="Matched", value=", ".join(payload["keywords"][:6]), inline=False)
+    links = [f"[Filing]({refs['filing']})"] if refs.get("filing") else []
+    if refs.get("document") and refs.get("document") != refs.get("filing"):
+        links.append(f"[Document]({refs['document']})")
+    if original_jump:
+        links.append(f"[Original 1.05 card]({original_jump})")
+    if links:
+        embed.add_field(name="Links", value=" · ".join(links), inline=False)
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+def compact_incident_embed(ev: dict, text: str, jump: str | None) -> discord.Embed:
+    label = "Ransomware claim" if ev["type"] == "ransomware.claim.public" else "Breach coverage"
+    embed = discord.Embed(title=truncate(f"{label} · {ev['ticker']}", 256), color=INCIDENT_COLOR,
+                          description=truncate(text, 300))
+    match = ev["payload"].get("match")
+    embed.add_field(name="Company", value=truncate(f"{ev.get('company') or ev['ticker']}"
+                                                   f"{' (name match, check it)' if match == 'fuzzy' else ''}", 1024))
+    if jump:
+        embed.add_field(name="Original post", value=f"[Jump]({jump})")
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+def _pct(value: float | None) -> str:
+    return "—" if value is None else f"{value * 100:+.2f}%"
+
+
+def study_embed(result: dict, days: int, ticker: str | None = None) -> discord.Embed:
+    from .events import EVENT_TYPES
+    title = f"Event study · {result['type']} · CAR[0,+{days}]" + (f" · {ticker}" if ticker else "")
+    embed = discord.Embed(title=truncate(title, 256), color=DIGEST_COLOR, description=(
+        f"{EVENT_TYPES.get(result['type'], result['type'])}. Market-adjusted abnormal return: the stock's return "
+        "minus CIBR (watchlist and exposure tickers) or SPY, summed over the window. Observed historically; "
+        "not a forecast."))
+    for label, name in (("main", "Before the open, after the close or market closed"),
+                        ("intraday", "Filed during the session (reported separately)")):
+        part = result[label]
+        s = part["summary"]
+        if not s.n:
+            value = "No events with prices for this window."
+        else:
+            value = (f"n = {s.n}{' · **insufficient data** (n < 20)' if s.insufficient else ''}\n"
+                     f"Mean {_pct(s.mean)} · median {_pct(s.median)}\n"
+                     f"95% CI of the mean {_pct(s.ci[0])} to {_pct(s.ci[1])}"
+                     + (f" · t = {s.t_stat:.2f}" if s.t_stat is not None else "") + "\n"
+                     f"Negative {s.share_negative:.0%} · positive {s.share_positive:.0%}")
+        extra = []
+        if part["overlap_dropped"]:
+            extra.append(f"{part['overlap_dropped']} overlapping")
+        if part["skipped"]:
+            extra.append(f"{part['skipped']} without prices")
+        if part["pending"]:
+            extra.append(f"{part['pending']} window not complete yet")
+        if extra:
+            value += "\nNot counted: " + ", ".join(extra)
+        embed.add_field(name=name, value=value, inline=False)
+    embed.set_footer(text=FIN_FOOTER)
+    return embed
+
+
+def events_embed(ticker: str, days: int, rows: list[dict], jump_url) -> discord.Embed:
+    lines = []
+    for ev in reversed(rows):
+        refs = ev["source_refs"]
+        link = refs.get("filing") or refs.get("url")
+        post = refs.get("message") or refs.get("post")
+        jump = jump_url(*post) if post else None
+        label = ev["type"]
+        detail = ev["payload"].get("title") or ev["payload"].get("victim") or ev["payload"].get("name") or ""
+        line = f"• {ev['effective_session']} · `{label}`" + (f" · {truncate(detail, 70)}" if detail else "")
+        targets = [f"[source]({link})"] if link else []
+        if jump:
+            targets.append(f"[post]({jump})")
+        lines.append(line + (" · " + " · ".join(targets) if targets else ""))
+    embed = discord.Embed(title=truncate(f"{ticker} · events in the last {days} days", 256), color=DIGEST_COLOR,
+                          description=_join_limit(lines, "\n", 4000) or "No recorded events.")
+    embed.set_footer(text=FIN_FOOTER)
+    return embed

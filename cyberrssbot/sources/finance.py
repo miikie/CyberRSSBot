@@ -81,6 +81,11 @@ class SECEdgarSource(Source):
             if await store.seen_any([key]):
                 continue
             await store.mark_seen([key], self.id)
+            if normalize_form(form)[0] == "8-K" and "2.02" in (items or "").split(","):
+                await self.app.events.record(
+                    "earnings.report", ticker=ticker, cik=cik, company=self.app.finance.watch.name(ticker),
+                    occurred_at=when, dedup=acc, payload={"items": items},
+                    refs={"accession": acc, "filing": SEC_INDEX.format(cik=cik, acc_path=acc.replace("-", ""), acc=acc)})
             if not self._wanted(form):
                 continue
             described = describe_filing(form, items)

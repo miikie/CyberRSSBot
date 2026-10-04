@@ -9,19 +9,27 @@ import tempfile
 import time
 
 from . import msrc, render
+from . import backfill
 from .classify import Intel
+from .companies import Companies
 from .digest import DigestRunner
 from .engine import StoryEngine, VulnEngine
+from .events import EventLog
 from .finance import FinanceEngine
 from .http import FetchError, Http
+from .incidents import IncidentDesk
 from .kb import KnowledgeBase
 from .market import MarketCalendar
 from .sources import build_sources
 from .store import Store
+from .study import Study
 
 log = logging.getLogger("cyberrssbot")
 
 FINNHUB_URL = "https://finnhub.io/api/v1"
+APP_MIGRATIONS = [
+    (2, "events from existing finance items, vulnerabilities and stories", backfill.from_local_tables),
+]
 
 
 class NullPoster:
@@ -53,6 +61,10 @@ class App:
         self.kb = KnowledgeBase(cfg.get("kb") or {}, [
             name for c in (cfg["finance"].get("companies") or {}).values()
             for name in (c.get("name"), *(c.get("aliases") or [])) if name])
+        self.companies = Companies(cfg, self.kb.cache_dir, self.kb.extras_dir)
+        self.events = EventLog(self)
+        self.study = Study(self)
+        self.incidents = IncidentDesk(self)
         self.vulns = VulnEngine(self)
         self.intel = Intel(cfg, self.kb, self.vulns.watch_re)
         self.digest = DigestRunner(self)
@@ -67,6 +79,8 @@ class App:
         await self.store.open()
         await self.http.start()
         await asyncio.to_thread(self.kb.load)
+        await asyncio.to_thread(self.companies.load)
+        await self.store.migrate(self.store.existed, APP_MIGRATIONS, self)
         await self.stories.load()
         await self.finance.load()
 
@@ -101,6 +115,23 @@ class App:
             self.tasks.append(asyncio.create_task(self._run_source(src, i * 3.0), name=f"source:{src.id}"))
         self.tasks.append(asyncio.create_task(self._flush_loop(), name="flush"))
         self.tasks.append(asyncio.create_task(self._kb_loop(), name="kb"))
+        if ((self.cfg.get("finance") or {}).get("events") or {}).get("backfill", True):
+            self.tasks.append(asyncio.create_task(self._backfill_once(), name="event-backfill"))
+
+    async def _backfill_once(self) -> None:
+        await asyncio.sleep(120)
+        try:
+            result = await backfill.run(self)
+            done = {step: counts for step, counts in result.items() if "skipped" not in counts}
+            if done:
+                log.info("event backfill: %s", done)
+                prices = next((s for s in self.sources if s.cfg.get("type") == "prices"), None)
+                if prices:
+                    prices.wake.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("event backfill failed")
         if (self.cfg.get("digest") or {}).get("enabled"):
             self.tasks.append(asyncio.create_task(self.digest.loop(), name="digest"))
 
@@ -134,6 +165,8 @@ class App:
         while True:
             try:
                 status = await self.kb.refresh(self.http)
+                status["sec_tickers"] = await self.companies.refresh(self.http,
+                                                                     self.cfg["secrets"].get("sec_user_agent"))
                 changed = {k: v for k, v in status.items() if v not in ("fresh", "unchanged")}
                 if changed:
                     log.info("knowledge base: %s (%s)", changed, self.kb.counts())
@@ -252,7 +285,9 @@ async def run_check(cfg: dict) -> int:
         async def reference():
             started = time.monotonic()
             status = await app.kb.refresh(app.http)
-            failed = app.kb.failed()
+            status["sec_tickers"] = await app.companies.refresh(app.http, cfg["secrets"].get("sec_user_agent"))
+            failed = app.kb.failed() + ([f"sec_tickers: {status['sec_tickers']}"]
+                                        if status["sec_tickers"].startswith("failed") else [])
             counts = app.kb.counts()
             detail = "; ".join(failed)[:110] if failed else \
                 f"{counts['actor']} actors, {counts['malware']} malware, {counts['vendor']} vendors, "                 f"{counts['product']} products ({', '.join(f'{k} {v}' for k, v in sorted(status.items()))})"[:110]

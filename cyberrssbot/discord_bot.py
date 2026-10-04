@@ -455,6 +455,33 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         await interaction.followup.send(
             embed=render.stock_embed(symbol, app.finance.watch.name(symbol), quote, items))
 
+    async def event_type_autocomplete(interaction: discord.Interaction, current: str):
+        from .events import EVENT_TYPES
+        return [app_commands.Choice(name=t, value=t) for t in EVENT_TYPES if current.lower() in t.lower()][:25]
+
+    @tree.command(name="study", description="Abnormal returns after a type of event (historical, not a forecast)")
+    @app_commands.describe(type="Event type", window="Trading sessions after the event", ticker="Only this ticker")
+    @app_commands.autocomplete(type=event_type_autocomplete)
+    @app_commands.choices(window=[app_commands.Choice(name=f"{d} session{'s' if d > 1 else ''}", value=d)
+                                  for d in (1, 5, 20)])
+    async def study(interaction: discord.Interaction, type: str, window: int = 5, ticker: str | None = None):
+        from .events import EVENT_TYPES
+        from .study import WINDOW_BY_DAYS
+        if type not in EVENT_TYPES or window not in WINDOW_BY_DAYS:
+            await interaction.response.send_message(f"`{type}` isn't a known event type.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        result = await app.study.aggregate(type, WINDOW_BY_DAYS[window], ticker=ticker.upper() if ticker else None)
+        await interaction.followup.send(embed=render.study_embed(result, window, ticker.upper() if ticker else None))
+
+    @tree.command(name="events", description="Recorded events for a ticker")
+    @app_commands.describe(ticker="e.g. CRWD", days="How far back (default 90)")
+    async def events_cmd(interaction: discord.Interaction, ticker: str, days: app_commands.Range[int, 1, 1095] = 90):
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        rows = await app.store.events_query(ticker=ticker.strip().upper(), since=since)
+        await interaction.response.send_message(
+            embed=render.events_embed(ticker.strip().upper(), days, rows, app.poster.jump_url))
+
     @tree.command(name="earnings", description="Upcoming earnings for the watchlist over the next 14 days")
     async def earnings(interaction: discord.Interaction):
         today = datetime.now(timezone.utc).date()

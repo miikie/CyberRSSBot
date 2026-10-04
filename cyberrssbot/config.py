@@ -39,6 +39,7 @@ DEFAULTS = {
         "companies": {},
         "benchmarks": {},
     },
+    "exposure": {"vendors": {}, "private": []},
     "kb": {"cache_dir": "kb_cache", "extras_dir": "kb", "refresh_days": 7, "use_misp": True},
     "routing": {},
     "digest": {
@@ -82,7 +83,7 @@ def load_config(path: str = "config.yaml") -> dict:
     if dupes:
         raise ValueError(f"duplicate source ids in config.yaml: {dupes}")
     enabled = {s.get("type", "rss") for s in cfg["sources"] if s.get("enabled", True)}
-    if "sec_edgar" in enabled and not cfg["secrets"]["sec_user_agent"]:
+    if enabled & {"sec_edgar", "sec_incidents"} and not cfg["secrets"]["sec_user_agent"]:
         raise ValueError("a sec_edgar source is enabled but neither SEC_USER_AGENT nor MAIN_EMAIL is set in .env "
                          "(SEC requires a contact User-Agent such as \"YourBot you@example.com\")")
     if enabled & FINNHUB_TYPES and not cfg["secrets"]["finnhub_api_key"]:
