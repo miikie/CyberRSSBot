@@ -206,7 +206,7 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         if not row:
             await interaction.response.send_message(f"`{vuln_id}` isn't tracked yet.", ephemeral=True)
             return
-        await interaction.response.send_message(embed=render.vuln_embed(row["data"]), ephemeral=True)
+        await interaction.response.send_message(embed=render.vuln_embed(row["data"]))
 
     @tree.command(name="poll", description="Poll a source right now")
     @app_commands.default_permissions(manage_guild=True)
@@ -231,7 +231,7 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
             return
         data = row["data"]
         attachment = discord.File(io.BytesIO(msrc.kb_tsv(data)), filename=msrc.tsv_name(kb_id))
-        await interaction.response.send_message(embed=render.kb_embed(data), file=attachment, ephemeral=True)
+        await interaction.response.send_message(embed=render.kb_embed(data), file=attachment)
 
     channel_group = app_commands.Group(name="channel", description="Where each category of post goes",
                                        default_permissions=discord.Permissions(manage_guild=True))
@@ -344,7 +344,7 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         if symbol not in app.finance.watch.symbols():
             await interaction.response.send_message(f"`{symbol}` isn't on the finance watchlist.", ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(thinking=True)
         quote = await app.store.quote_get(symbol)
         if (quote is None or time.time() - quote[1] > 900) and app.cfg["secrets"].get("finnhub_api_key"):
             try:
@@ -356,14 +356,14 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
                 log.warning("live quote for %s failed: %s", symbol, exc)
         items = await app.store.fin_for_ticker(symbol, 5)
         await interaction.followup.send(
-            embed=render.stock_embed(symbol, app.finance.watch.name(symbol), quote, items), ephemeral=True)
+            embed=render.stock_embed(symbol, app.finance.watch.name(symbol), quote, items))
 
     @tree.command(name="earnings", description="Upcoming earnings for the watchlist over the next 14 days")
     async def earnings(interaction: discord.Interaction):
         today = datetime.now(timezone.utc).date()
         rows = await app.store.earnings_between(today.isoformat(), (today + timedelta(days=14)).isoformat())
         await interaction.response.send_message(
-            embed=render.earnings_embed(rows, app.finance.watch, "Upcoming earnings · next 14 days"), ephemeral=True)
+            embed=render.earnings_embed(rows, app.finance.watch, "Upcoming earnings · next 14 days"))
 
 
 class CyberRSSBotClient(discord.Client):
