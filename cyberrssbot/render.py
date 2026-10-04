@@ -712,3 +712,115 @@ def insider_embed(ev: dict) -> discord.Embed:
                           description="\n".join(lines))
     embed.set_footer(text=FIN_FOOTER)
     return embed
+
+
+def _p(value) -> str:
+    return "—" if value is None else f"{value * 100:+.2f}%"
+
+
+def dossier_embeds(d: dict, jump_url=None, compact: bool = False) -> list[discord.Embed]:
+    head = discord.Embed(title=truncate(f"Dossier · {d['ticker']} — {d['name']}", 256), color=SIGNAL_COLOR,
+                         description=f"As of {d['as_of']}. Everything here is observed history, not a forecast.")
+    nxt = d.get("next_earnings")
+    if nxt:
+        parts = [f"**{nxt['date']}** · {EARNINGS_HOUR.get((nxt.get('hour') or '').lower(), 'time TBA')}"]
+        if nxt.get("epsEstimate") is not None:
+            parts.append(f"EPS est {float(nxt['epsEstimate']):.2f}")
+        if nxt.get("revenueEstimate"):
+            parts.append(f"revenue est {_big(nxt['revenueEstimate'])}")
+        head.add_field(name="Next earnings", value=" · ".join(parts), inline=False)
+    else:
+        head.add_field(name="Next earnings", value="No date in the calendar.", inline=False)
+    perf = []
+    for days in (30, 90):
+        p = d["performance"].get(days)
+        if p:
+            perf.append(f"{days} days: {d['ticker']} {_p(p['stock'])} vs CIBR {_p(p['bench'])} ({_p(p['relative'])} relative)")
+    head.add_field(name="Price vs CIBR", value="\n".join(perf) or "No prices yet.", inline=False)
+    pr = d.get("pressure")
+    if pr:
+        z = f"{pr['z']:+.1f}" if pr["z"] is not None else "n/a"
+        top = "; ".join(truncate(c.title, 60) for c in pr["top"])
+        head.add_field(name="Vulnerability pressure", value=f"score {pr['score']:.1f} · z {z} · {pr['items']} items"
+                       + (f"\n{top}" if top else ""), inline=False)
+    else:
+        head.add_field(name="Vulnerability pressure", value="No contributions in the last 30 days.", inline=False)
+    if compact:
+        lines = [f"{r['session']}: CAR[0,+1] {_p(r['car_0_1'])} · CAR[0,+5] {_p(r['car_0_5'])}" for r in d["reactions"][:4]]
+        head.add_field(name="Last earnings reactions", value="\n".join(lines) or "None recorded.", inline=False)
+        head.set_footer(text=FIN_FOOTER)
+        return [head]
+    head.set_footer(text=FIN_FOOTER)
+
+    hist = discord.Embed(title="Earnings history", color=SIGNAL_COLOR)
+    lines = [f"`{r['session']}` CAR[0,+1] {_p(r['car_0_1'])} · CAR[0,+5] {_p(r['car_0_5'])}"
+             + (f" · tone {r['tone']:+.2f}" if r["tone"] is not None else "")
+             + (f" · [release]({r['link']})" if r.get("link") else "") for r in d["reactions"]]
+    hist.description = _join_limit(lines, "\n", 1500) or "No earnings reports recorded."
+    tones = [f"{r['tone']:+.2f}" for r in reversed(d["tone"])]
+    hist.add_field(name="Tone, oldest to newest", value=" → ".join(tones) or "No scored releases.", inline=False)
+    own = [f"• {e['effective_session']} `{e['type']}` " + truncate(str(e["payload"].get("owner") or
+           ", ".join(e["payload"].get("names") or []) or e["payload"].get("form") or ""), 70) for e in d["ownership"]]
+    hist.add_field(name="Insiders and ownership, 90 days", value=_join_limit(own, "\n", 900) or "None.", inline=False)
+    hist.set_footer(text=FIN_FOOTER)
+
+    events = discord.Embed(title="Events, last 90 days", color=SIGNAL_COLOR)
+    events.description = _join_limit([f"• {e['effective_session']} " + event_link(e, jump_url)
+                                       for e in reversed(d["timeline"])], "\n", 1500) or "No recorded events."
+    rows = []
+    for e in d["evidence"]:
+        ci = f"{_p(e['ci'][0])} to {_p(e['ci'][1])}" if e["ci"] else "—"
+        rows.append(f"`{e['type']}` n={e['n']} · mean {_p(e['mean'])} · median {_p(e['median'])} · CI {ci}"
+                    + (" · insufficient data" if e["insufficient"] else ""))
+    events.add_field(name="Evidence: CAR[0,+5] after each event type, all tickers",
+                     value=_join_limit(rows, "\n", 1000) or "—", inline=False)
+    events.set_footer(text=FIN_FOOTER)
+    return [head, hist, events]
+
+
+def paper_line(trade: dict, kind: str, ev: dict | None, jump: str | None) -> str:
+    what = f"`{ev['type']}`" if ev else "event"
+    link = f" ([trigger]({jump}))" if jump else ""
+    side = trade["side"]
+    if kind == "entry":
+        return (f"📝 Paper {'short' if side == 'short' else 'long'} **{trade['ticker']}** opened at "
+                f"${trade['entry_price']:,.2f} on {trade['entry_date']} · rule `{trade['rule']}` · {what}{link} · "
+                "simulated, no real order")
+    return (f"📝 Paper {side} **{trade['ticker']}** closed at ${trade['exit_price']:,.2f} on {trade['exit_date']} "
+            f"({trade['exit_reason']}) · {_p(trade['ret'])} · ${trade['pnl']:,.2f} · rule `{trade['rule']}`{link}")
+
+
+def paper_stats_text(s: dict) -> str:
+    if not s.get("closed"):
+        return f"{s['trades']} trades, none closed yet."
+    out = (f"{s['closed']} closed, {s['open']} open · win rate {s['win_rate']:.0%} · average {_p(s['avg_return'])} · "
+           f"P&L ${s['total_pnl']:,.0f} · max drawdown {_p(s['max_drawdown'])}")
+    if s.get("benchmark_avg_return") is not None:
+        out += f"\nBenchmark held over the same periods: average {_p(s['benchmark_avg_return'])}, " \
+               f"${s['benchmark_total_pnl']:,.0f} on the same capital"
+    return out
+
+
+def paper_embed(title: str, rows: list[tuple[str, str]], note: str | None = None) -> discord.Embed:
+    embed = discord.Embed(title=truncate(title, 256), color=SIGNAL_COLOR, description=note)
+    for name, value in rows[:24]:
+        embed.add_field(name=truncate(name, 256), value=truncate(value, 1024), inline=False)
+    embed.set_footer(text="Simulated paper trading. No orders are placed. Short borrow costs are ignored. " + FIN_FOOTER)
+    return embed
+
+
+def report_embeds(text: str, title: str) -> list[discord.Embed]:
+    chunks, buf = [], ""
+    for line in text.split("\n"):
+        if buf and len(buf) + len(line) + 1 > 3800:
+            chunks.append(buf)
+            buf = ""
+        buf = f"{buf}\n{line}" if buf else line
+    if buf:
+        chunks.append(buf)
+    embeds = []
+    for i, chunk in enumerate(chunks):
+        e = discord.Embed(description=chunk, color=SIGNAL_COLOR, title=title if i == 0 else None)
+        e.set_footer(text=FIN_FOOTER)
+        embeds.append(e)
+    return embeds

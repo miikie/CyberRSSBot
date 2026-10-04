@@ -14,6 +14,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - [Microsoft security updates](#microsoft-security-updates)
 - [Intelligence digest](#intelligence-digest)
 - [Cyber-financials](#cyber-financials)
+- [Cyber-finance](#cyber-finance)
 - [How deduplication works](#how-deduplication-works)
 - [Rate limiting](#rate-limiting)
 - [Slash commands](#slash-commands)
@@ -36,6 +37,7 @@ Vulnerabilities reported by NVD, GitHub, MSRC, CISA KEV and FIRST EPSS are merge
 - **Windows update tracking.** One card per Windows KB on Patch Tuesday, with a TSV of every CVE it fixes, edited in place when Microsoft revises the release.
 - **Deterministic digests.** Scheduled summaries built by rules from public reference data, with a coverage section that says what was and wasn't checked.
 - **Cyber-financials.** SEC filings, press releases, a daily close summary, big-move alerts and an earnings calendar for a watchlist of security stocks.
+- **Cyber-finance events and studies.** Incident disclosures, insider activity, earnings tone, guidance and vulnerability pressure become typed events; event studies measure what prices did afterwards, and simulated paper trading tests simple rules against them.
 
 ## Channels
 
@@ -56,8 +58,8 @@ Channels are grouped into categories. Each row is one channel; the keys are the 
 | Cyber-Finance | market-tape | The daily close summary and big-move alerts with likely catalysts |
 | Cyber-Finance | sec-filings | Watchlist SEC filings, insider open-market purchases and insider selling clusters |
 | Cyber-Finance | incident-disclosures | Market-wide 8-K Item 1.05 incidents and Item 8.01 cyber disclosures, plus compact cards when a leak-site claim or a widely covered breach names a listed company |
-| Cyber-Finance | earnings | The earnings calendar and same-day reminders |
-| Cyber-Finance | signals | Vendor vulnerability pressure spikes and the weekly pressure ranking |
+| Cyber-Finance | earnings | The earnings calendar, same-day reminders and a compact dossier two sessions before each watchlist report |
+| Cyber-Finance | signals | Vendor vulnerability pressure spikes, the weekly pressure ranking, the weekly evidence report and simulated paper-trading entries and exits |
 | Admin (private) | bot-log | Source failures and recoveries, channel checks, digest and layout runs |
 
 ### Server layout
@@ -182,6 +184,65 @@ A single earnings release usually produces an 8-K, a press release and several a
 
 Daily usage: about 1,770 EDGAR requests on weekdays and 410 on weekends, and about 600 Finnhub calls on trading days. Most company investor relations sites block automated clients, so press release coverage relies on the companies that publish feeds, GlobeNewswire keyword feeds and the Business Wire M&A feed. SEC filings are the authoritative record and carry the press release as an exhibit. Class-action law firm notices are filtered out.
 
+## Cyber-finance
+
+Everything that happens to a listed company is recorded once as a typed **event** with its ticker, the trading session it affects and links to its sources. Posts, the digest, `/events`, `/study`, dossiers and paper trading all read the same event log.
+
+### Channels
+
+| Channel | Posts |
+|---|---|
+| market-tape | Close summary (with the day's unexplained moves) and big-move alerts, each alert listing up to three likely catalysts from the previous 72 hours |
+| sec-filings | Watchlist filings, insider open-market purchases and insider selling clusters |
+| incident-disclosures | 8-K Item 1.05 incidents, amendments and Item 8.01 cyber disclosures from any listed company; compact cards for leak-site claims and widely covered breaches naming a listed company |
+| earnings | Calendar, reminders and a compact dossier two sessions before each watchlist report |
+| signals | Pressure spikes, the weekly pressure ranking (Mondays), the weekly evidence report (Sundays 14:00 UTC) and one line per simulated paper trade |
+
+### Event types
+
+| Type | Recorded when |
+|---|---|
+| `sec.8k.1_05` | An 8-K carries Item 1.05 (material cybersecurity incident) |
+| `sec.8k.1_05_amendment` | An 8-K/A amends a 1.05 disclosure |
+| `sec.8k.8_01_cyber` | An Item 8.01 voluntary disclosure mentions a cyber incident |
+| `earnings.report` | An 8-K carries Item 2.02 (results); the press release exhibit is scored for tone |
+| `tone.shift` | That release's tone is 1.5+ standard deviations from the ticker's previous 8 |
+| `guidance.raise` · `guidance.cut` · `guidance.reaffirm` | A release or press item raises, lowers, withdraws or reaffirms guidance |
+| `mna.announce` | A merger or acquisition is announced; both sides are recorded when both are listed |
+| `strategic.review` | A review of strategic alternatives is announced |
+| `ransomware.claim.public` | A leak-site claim names a listed company |
+| `breach.news.public` | Two or more outlets cover a breach at a listed company |
+| `kev.vendor` | CISA KEV adds a product of a vendor mapped to a ticker |
+| `vuln.vendor_critical` | An exploited or CVSS 9+ vulnerability in a mapped vendor's product is covered by 2+ outlets |
+| `pressure.spike` | Vendor vulnerability pressure is 2+ standard deviations above the ticker's own year |
+| `move.unexplained` | A stock moves on its own (not with the sector) with no event in the previous 72 hours |
+| `insider.open_buy` | An insider buys on the open market outside a 10b5-1 plan |
+| `insider.cluster_sell` | 3+ insiders sell outside 10b5-1 plans within 10 sessions (tax sales on vesting excluded) |
+| `ownership.13d` | A Schedule 13D or 13D/A is filed |
+
+Each event is assigned the session it can first affect: before the open it is that day's session, during the session it is marked intraday, after the close or on a closed day it is the next session. Sources that give only a date, such as KEV, count from the next session.
+
+### Studies
+
+`/study` measures the market-adjusted abnormal return after each event type over several windows (day 0 to +1, +5, +20, and the 5 sessions before), against CIBR for security companies and SPY otherwise, with a market-model version alongside. Repeated events for one ticker within 20 sessions count once, intraday events are reported separately, and results with fewer than 20 events are marked insufficient. Confidence intervals come from a seeded bootstrap, so the same data always gives the same answer.
+
+The **weekly evidence report** lists every event type with new and total events, the 5-session mean and median with its 95% interval, the share of negative outcomes and the change since last week. Because many types are tested at once, p-values are corrected with Benjamini-Hochberg at q = 0.10: a type is *promising* with 30+ events that pass, *noise* with 30+ that don't, and *collecting* below 30.
+
+A **dossier** (`/dossier <ticker>`) brings it together for one company: next earnings with estimates, the last 8 earnings reactions with tone and release links, the tone trend, insider and ownership events, 90 days of events, vulnerability pressure, price against CIBR over 30 and 90 days, and the historical evidence for each event type seen.
+
+### Paper trading
+
+Rules in the config describe a simulated position to take after an event type: side, entry at the next open, exit after N sessions or at a stop or target, fixed size and a cap on open positions. The simulation fills at daily opens and closes with slippage, assumes the stop was hit first when a day touches both stop and target, and ignores short borrow costs. `/paper backtest` replays a rule over the stored history without touching the live ledger; the live ledger only starts on the day a rule is added. Results are compared with holding the benchmark over the same periods. There is no broker integration of any kind, and no orders are ever placed.
+
+### Limits
+
+- **Delayed free data.** Prices are daily bars from a free source and quotes come from Finnhub's free tier; neither is real-time.
+- **Survivorship bias.** Prices are only available for tickers still listed, so companies acquired or delisted after an event drop out of the studies.
+- **Short-borrow assumptions.** Simulated shorts pay no borrow fee and are always available, which flatters short rules on small or hard-to-borrow stocks.
+- **Small samples.** Most event types have tens of events, not thousands. Wide intervals and the *collecting* label are the honest result; a *promising* label is a reason to keep watching, not a forecast.
+
+All finance posts are observations of what happened historically. Data may be delayed. Not financial advice.
+
 ## How deduplication works
 
 1. **Same link, different feed.** URLs are canonicalized before hashing: tracking parameters, `www.`, `/amp` and trailing slashes are stripped, so a syndicated article is recognized everywhere.
@@ -202,6 +263,9 @@ Requests to the same host are serialized and spaced out; NVD is held to its publ
 | `/cve <id>` | The merged card for any tracked CVE or GHSA id |
 | `/study <type> [window] [ticker]` | Abnormal returns after a type of event: mean, median, hit rate, t-statistic and a bootstrap confidence interval |
 | `/events <ticker> [days]` | Timeline of recorded events for a ticker |
+| `/dossier <ticker>` | Earnings history, tone, insiders, recent events, pressure, relative performance and evidence for one company (private reply) |
+| `/paper status` · `/paper rules` · `/paper history <rule>` | Simulated paper-trading results, the configured rules and a rule's trades |
+| `/paper backtest <rule>` | Replay a rule over the stored history, separately from the live ledger |
 | `/kb <number>` | The stored card and CVE list for a tracked Windows security update |
 | `/poll <source>` | Poll a source immediately (moderators only) |
 | `/channel set <category> <channel>` | Send a category of posts (news, kev, microsoft, digest...) to a different channel, effective immediately (moderators only) |
@@ -227,20 +291,36 @@ cyberrssbot/
 ├── cyberrssbot/
 │   ├── __main__.py      command line entry point
 │   ├── app.py           wiring, scheduler, flush loop, health check
+│   ├── backfill.py      one-time history backfill for events and prices
 │   ├── classify.py      topic labels, signal score, label routing
+│   ├── companies.py     ticker and company resolution, vendor exposure map
 │   ├── config.py        config loading and defaults
 │   ├── digest.py        digest builder, scheduler and message splitting
 │   ├── discord_bot.py   client, poster, slash commands
+│   ├── dossier.py       per-company dossier assembly
 │   ├── engine.py        VulnEngine (merge, post, edit) and StoryEngine (clustering)
+│   ├── events.py        event types, effective session, event log
+│   ├── evidence.py      weekly evidence report, Benjamini-Hochberg correction
 │   ├── extract.py       entity, money, count and action-verb extraction
 │   ├── finance.py       watchlist, filing decoding, event classification, FinanceEngine
+│   ├── fsignals.py      finance signals: tone, guidance, insiders, pressure, move catalysts
+│   ├── guidance.py      guidance and M&A patterns
+│   ├── incidents.py     8-K 1.05 / 8.01 incident disclosures
+│   ├── insiders.py      Form 4 parsing and selling clusters
 │   ├── kb.py            knowledge base: ATT&CK, MISP, KEV and manual gazetteers
+│   ├── layout.py        /setup channel layout planning and rollback
 │   ├── market.py        NYSE trading calendar
 │   ├── msrc.py          MSRC CVRF parsing, KB index, revision diff, TSV export
 │   ├── dedup.py         URL canonicalization, title fingerprints, story index
 │   ├── http.py          per-host pacing, conditional GET, retries
+│   ├── paper.py         paper-trading simulation and statistics
+│   ├── paperdesk.py     paper-trading ledger, backtests and posts
+│   ├── prices.py        daily price download and quality checks
 │   ├── render.py        Discord embeds
+│   ├── signals.py       vulnerability pressure scores and spikes
 │   ├── store.py         SQLite schema and queries
+│   ├── study.py         event studies: abnormal returns, bootstrap intervals
+│   ├── tone.py          release tone scoring
 │   ├── upgrade.py       adds new settings and sources to an existing config file
 │   ├── util.py          shared helpers
 │   └── sources/
@@ -248,8 +328,11 @@ cyberrssbot/
 │       ├── feeds.py     RSS / Atom and scrape sources
 │       ├── finance.py   SEC EDGAR, quotes, earnings and company news sources
 │       ├── msrc.py      Windows security update tracker
+│       ├── prices.py    daily prices after each close
+│       ├── sec_incidents.py  market-wide 8-K incident disclosures
+│       ├── signals.py   pressure, paper trading, pre-earnings dossiers, weekly evidence report
 │       └── vulns.py     NVD, KEV, GHSA and EPSS sources
-├── kb/                  manual lists: actors, ransomware groups, regulators, countries
+├── kb/                  manual lists: actors, ransomware groups, regulators, countries, tone lexicon
 ├── install.sh           installer and updater for a Debian or Ubuntu host
 ├── config.example.yaml
 ├── .env.example

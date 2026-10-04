@@ -151,7 +151,7 @@ class Poster:
                         "Microsoft update cards will be posted without a ping", self.microsoft_role)
 
     async def send(self, key: str, *, embed=None, content=None, ping_kev=False, fallback=True,
-                   ping_microsoft=False, file: tuple[str, bytes] | None = None):
+                   ping_microsoft=False, file: tuple[str, bytes] | None = None, embeds=None):
         await self.client.wait_until_ready()
         channel = await self._resolve(key, fallback)
         if channel is None:
@@ -166,7 +166,8 @@ class Poster:
         attachment = discord.File(io.BytesIO(file[1]), filename=file[0]) if file else None
         async with self.lock:
             try:
-                msg = await channel.send(content=content, embed=embed, allowed_mentions=mentions, file=attachment)
+                kwargs = {"embeds": embeds} if embeds else {"embed": embed}
+                msg = await channel.send(content=content, allowed_mentions=mentions, file=attachment, **kwargs)
             except discord.HTTPException as exc:
                 log.error("posting to '%s' failed: %s", key, exc)
                 return None
@@ -481,6 +482,77 @@ def register_commands(tree: app_commands.CommandTree, app) -> None:
         rows = await app.store.events_query(ticker=ticker.strip().upper(), since=since)
         await interaction.response.send_message(
             embed=render.events_embed(ticker.strip().upper(), days, rows, app.poster.jump_url))
+
+    @tree.command(name="dossier", description="Earnings history, events, pressure and evidence for a ticker")
+    @app_commands.describe(ticker="e.g. CRWD", private="Only show the reply to you")
+    async def dossier_cmd(interaction: discord.Interaction, ticker: str, private: bool = False):
+        from . import dossier
+        await interaction.response.defer(ephemeral=private, thinking=True)
+        data = await dossier.build(app, ticker.strip().upper())
+        await interaction.followup.send(embeds=render.dossier_embeds(data, app.poster.jump_url), ephemeral=private)
+
+    paper_group = app_commands.Group(name="paper", description="Simulated paper trading (no real orders)")
+
+    async def rule_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name=r.id, value=r.id) for r in app.paperdesk.rules
+                if current.lower() in r.id.lower()][:25]
+
+    @paper_group.command(name="status", description="Open paper positions and P&L per rule")
+    async def paper_status(interaction: discord.Interaction):
+        from . import paper
+        if not app.paperdesk.rules:
+            await interaction.response.send_message("No paper rules are configured.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        rows = []
+        for rule in app.paperdesk.rules:
+            trades = await app.store.paper_trades(rule.id)
+            open_ = [t for t in trades if not t["exit_date"]]
+            lines = [f"{t['side']} {t['ticker']} from {t['entry_date']} at ${t['entry_price']:,.2f}" for t in open_[:10]]
+            closed = sum(t["pnl"] or 0 for t in trades if t["exit_date"])
+            rows.append((f"{rule.id} · {len(open_)} open · closed P&L ${closed:,.0f}", "\n".join(lines) or "No open positions."))
+        state = "on" if app.paperdesk.enabled else "off (`paper.enabled` is false)"
+        await interaction.followup.send(embed=render.paper_embed("Paper trading status", rows, f"Live ledger: {state}."))
+
+    @paper_group.command(name="rules", description="Per-rule paper trading statistics")
+    async def paper_rules(interaction: discord.Interaction):
+        if not app.paperdesk.rules:
+            await interaction.response.send_message("No paper rules are configured.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        rows = []
+        for rule, summary in zip(app.paperdesk.rules, await app.paperdesk.summary()):
+            what = (f"when `{rule.event}` (confidence ≥ {rule.min_confidence:g}) · {rule.side} at the next open · "
+                    f"exit after {rule.sessions} sessions" + (f", stop {rule.stop_pct}%" if rule.stop_pct else "")
+                    + (f", target {rule.target_pct}%" if rule.target_pct else "") + f" · ${rule.fixed_usd:,.0f} per trade")
+            rows.append((rule.id, what + "\n" + render.paper_stats_text(summary)))
+        await interaction.followup.send(embed=render.paper_embed("Paper rules", rows))
+
+    @paper_group.command(name="history", description="Closed and open paper trades for a rule")
+    @app_commands.autocomplete(rule=rule_autocomplete)
+    async def paper_history(interaction: discord.Interaction, rule: str):
+        trades = await app.store.paper_trades(rule)
+        lines = [f"{t['entry_date']} {t['side']} {t['ticker']} ${t['entry_price']:,.2f}"
+                 + (f" → {t['exit_date']} ${t['exit_price']:,.2f} ({t['exit_reason']}) {t['ret'] * 100:+.2f}%"
+                    if t["exit_date"] else " · open") for t in trades[-25:]]
+        await interaction.response.send_message(embed=render.paper_embed(
+            f"Paper history · {rule}", [("Trades", "\n".join(lines) or "No trades yet.")]))
+
+    @paper_group.command(name="backtest", description="Run a paper rule over past events without touching the ledger")
+    @app_commands.autocomplete(rule=rule_autocomplete)
+    async def paper_backtest(interaction: discord.Interaction, rule: str):
+        found = app.paperdesk.rule(rule)
+        if found is None:
+            await interaction.response.send_message(f"No paper rule called `{rule}`.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        result = await app.paperdesk.backtest(found)
+        await interaction.followup.send(embed=render.paper_embed(
+            f"Backtest · {rule}", [("Result", render.paper_stats_text(result["stats"]))],
+            f"Historical events from {result['first']} to {result['last']}. Fills at daily open and close prices "
+            f"with {app.paperdesk.slippage_bps:g} bps slippage; a day that hits both stop and target counts as the stop."))
+
+    tree.add_command(paper_group)
 
     @tree.command(name="earnings", description="Upcoming earnings for the watchlist over the next 14 days")
     async def earnings(interaction: discord.Interaction):

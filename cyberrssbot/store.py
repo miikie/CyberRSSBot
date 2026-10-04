@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS insider_tx (
     code TEXT, shares REAL, price REAL, value REAL, owned_after REAL, plan INTEGER, cover INTEGER DEFAULT 0,
     PRIMARY KEY(accession, idx));
 CREATE INDEX IF NOT EXISTS idx_insider_ticker ON insider_tx(ticker, date);
+CREATE TABLE IF NOT EXISTS paper_rules (id TEXT PRIMARY KEY, config TEXT, created TEXT);
+CREATE TABLE IF NOT EXISTS paper_trades (
+    rule TEXT NOT NULL, event_id INTEGER NOT NULL, ticker TEXT, side TEXT, entry_date TEXT, entry_price REAL,
+    shares REAL, exit_date TEXT, exit_price REAL, exit_reason TEXT, pnl REAL, ret REAL,
+    posted_entry INTEGER DEFAULT 0, posted_exit INTEGER DEFAULT 0, PRIMARY KEY(rule, event_id));
+CREATE TABLE IF NOT EXISTS paper_daily (rule TEXT NOT NULL, date TEXT NOT NULL, equity REAL, cash REAL,
+    PRIMARY KEY(rule, date));
 CREATE TABLE IF NOT EXISTS ms_releases (kb TEXT, build TEXT, date TEXT, type TEXT, PRIMARY KEY(kb, build));
 """
 
@@ -604,6 +611,54 @@ class Store:
         rows = await self._all("SELECT * FROM insider_tx WHERE ticker=? AND code='S' AND plan=0 AND cover=0 AND date>=? AND date<=? "
                                "ORDER BY date, accession, idx", (ticker.upper(), start, end))
         return [dict(r) for r in rows]
+
+    async def paper_rule_start(self, rule_id: str, config: str, today: str) -> str:
+        row = await self._one("SELECT created FROM paper_rules WHERE id=?", (rule_id,))
+        if row:
+            await self._exec("UPDATE paper_rules SET config=? WHERE id=?", (config, rule_id))
+            return row["created"]
+        await self._exec("INSERT INTO paper_rules(id, config, created) VALUES (?,?,?)", (rule_id, config, today))
+        return today
+
+    async def paper_trades_replace(self, rule_id: str, trades, daily) -> list[tuple[dict, str]]:
+        existing = {r["event_id"]: dict(r) for r in await self._all("SELECT * FROM paper_trades WHERE rule=?", (rule_id,))}
+        pending = []
+        for t in trades:
+            old = existing.get(t.event_id) or {}
+            row = {"rule": rule_id, "event_id": t.event_id, "ticker": t.ticker, "side": t.side,
+                   "entry_date": t.entry_date, "entry_price": t.entry_price, "shares": t.shares,
+                   "exit_date": t.exit_date, "exit_price": t.exit_price, "exit_reason": t.exit_reason, "pnl": t.pnl,
+                   "ret": t.ret, "posted_entry": old.get("posted_entry", 0), "posted_exit": old.get("posted_exit", 0)}
+            await self.db.execute(
+                "INSERT OR REPLACE INTO paper_trades(rule, event_id, ticker, side, entry_date, entry_price, shares, "
+                "exit_date, exit_price, exit_reason, pnl, ret, posted_entry, posted_exit) "
+                "VALUES (:rule,:event_id,:ticker,:side,:entry_date,:entry_price,:shares,:exit_date,:exit_price,"
+                ":exit_reason,:pnl,:ret,:posted_entry,:posted_exit)", row)
+            if not row["posted_entry"]:
+                pending.append((row, "entry"))
+            if row["exit_date"] and not row["posted_exit"]:
+                pending.append((row, "exit"))
+        await self.db.execute("DELETE FROM paper_daily WHERE rule=?", (rule_id,))
+        await self.db.executemany("INSERT INTO paper_daily(rule, date, equity, cash) VALUES (?,?,?,?)",
+                                  [(rule_id, d, e, c) for d, e, c in daily])
+        await self.db.commit()
+        return pending
+
+    async def paper_set_posted(self, rule_id: str, event_id: int, kind: str) -> None:
+        column = "posted_entry" if kind == "entry" else "posted_exit"
+        await self._exec(f"UPDATE paper_trades SET {column}=1 WHERE rule=? AND event_id=?", (rule_id, event_id))
+
+    async def paper_mark_posted(self, rule_id: str) -> None:
+        await self._exec("UPDATE paper_trades SET posted_entry=1, posted_exit=CASE WHEN exit_date IS NULL THEN 0 ELSE 1 END "
+                         "WHERE rule=?", (rule_id,))
+
+    async def paper_trades(self, rule_id: str) -> list[dict]:
+        return [dict(r) for r in await self._all("SELECT * FROM paper_trades WHERE rule=? ORDER BY entry_date, event_id",
+                                                 (rule_id,))]
+
+    async def paper_daily(self, rule_id: str) -> list[tuple[str, float, float]]:
+        rows = await self._all("SELECT date, equity, cash FROM paper_daily WHERE rule=? ORDER BY date", (rule_id,))
+        return [(r["date"], r["equity"], r["cash"]) for r in rows]
 
     async def event_set_payload(self, event_id: int, payload: dict) -> None:
         await self._exec("UPDATE events SET payload=? WHERE id=?", (json.dumps(payload, sort_keys=True), event_id))

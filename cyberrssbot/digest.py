@@ -27,6 +27,33 @@ DEFAULT_SECTIONS = [
     {"key": "policy", "title": "Policy & law", "labels": ["policy-law"]},
     {"key": "markets", "title": "Markets", "labels": ["finance"]},
 ]
+MARKET_EVENT_TYPES = ("sec.8k.1_05", "pressure.spike", "move.unexplained", "earnings.report")
+DEFAULT_EVENT_WEIGHTS = {"sec.8k.1_05": 4.0, "pressure.spike": 2.0, "move.unexplained": 1.0, "earnings.report": 1.0}
+
+
+def market_event_item(ev: dict) -> dict | None:
+    p, refs, who = ev["payload"], ev["source_refs"], ev.get("company") or ev["ticker"]
+    tag = f" ({ev['ticker']})" if ev.get("company") and ev["ticker"] else ""
+    if ev["type"] == "sec.8k.1_05":
+        from .incidents import badges
+        found = badges(p.get("features") or {})
+        return {"title": f"{who}{tag} discloses a material cybersecurity incident in an 8-K (Item 1.05)",
+                "url": refs.get("filing"), "source": "SEC EDGAR",
+                "summary": ("The filing mentions: " + ", ".join(found) + ".") if found else ""}
+    if ev["type"] == "pressure.spike":
+        top = (p.get("top") or [{}])[0]
+        return {"title": f"Vulnerability pressure spike for {ev['ticker']}: score {p['score']:.1f}, "
+                         f"{p['z']:.1f} standard deviations above its own history",
+                "url": top.get("url"), "source": "signals", "summary": ""}
+    if ev["type"] == "move.unexplained":
+        return {"title": f"{ev['ticker']} moved {p.get('dp', 0):+.1f}% with no recorded catalyst in the previous 72 hours",
+                "url": None, "source": "market data", "summary": ""}
+    if ev["type"] == "earnings.report" and (p.get("tone") or {}).get("tone") is not None:
+        return {"title": f"{who}{tag} reported earnings; release tone {p['tone']['tone']:+.2f}",
+                "url": refs.get("exhibit") or refs.get("filing"), "source": "SEC EDGAR", "summary": ""}
+    return None
+
+
 DEFAULT_LABEL_PRIORITY = ["exploited", "law-enforcement", "policy-law", "supply-chain", "apt", "malware",
                           "ransomware", "breach", "vulnerability", "finance"]
 DEFAULT_EDITIONS = [
@@ -453,6 +480,21 @@ def compose(inputs: dict, cfg: dict, intel, start: datetime, end: datetime, edit
                            age_hours=max(0.0, min(age(when), hours))),
         })
 
+    event_weights = {**DEFAULT_EVENT_WEIGHTS, **((intel.weights or {}).get("event_types") or {})}
+    for ev in sorted(inputs.get("events") or [], key=lambda e: e["id"]):
+        when = parse_time(ev["occurred_at"])
+        if when is None or not (start <= when < end):
+            continue
+        item = market_event_item(ev)
+        if item is None:
+            continue
+        stats["raw"] += 1
+        stats["clustered"] += 1
+        ex = extract(item["title"], kb)
+        items.append({**item, "kind": "event", "sort": f"e{ev['id']:012d}", "labels": ["finance"], "also": [],
+                      "tags": [], "score": round(score(ex, weights=intel.weights, primary=True, age_hours=age(when))
+                                                 + float(event_weights.get(ev["type"], 0.0)), 3)})
+
     for row in sorted(inputs.get("finance") or [], key=lambda r: r["id"]):
         d = row["data"]
         stats["raw"] += 1 + len(d.get("also") or [])
@@ -659,6 +701,8 @@ class DigestRunner:
             "quotes": [{"symbol": sym, "name": watch.name(sym), "dp": q.get("dp"), "ts": ts}
                        for sym, q, ts in await store.quotes_all() if sym in watch.companies],
             "windows": windows,
+            "events": [e for e in await store.events_query(since=(start - timedelta(days=4)).date().isoformat())
+                       if e["type"] in MARKET_EVENT_TYPES],
             "sources": [{"id": s.id, "name": s.name, **{k: states.get(s.id, {}).get(k)
                                                         for k in ("last_ok", "fails", "last_err")}}
                         for s in app.sources],

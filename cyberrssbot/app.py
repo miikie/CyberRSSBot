@@ -19,6 +19,7 @@ from .finance import FinanceEngine
 from .fsignals import FinanceSignals
 from .http import FetchError, Http
 from .incidents import IncidentDesk
+from .paperdesk import PaperDesk
 from .kb import KnowledgeBase
 from .market import MarketCalendar
 from .sources import build_sources
@@ -67,6 +68,7 @@ class App:
         self.study = Study(self)
         self.incidents = IncidentDesk(self)
         self.fsignals = FinanceSignals(self)
+        self.paperdesk = PaperDesk(self)
         self.vulns = VulnEngine(self)
         self.intel = Intel(cfg, self.kb, self.vulns.watch_re)
         self.digest = DigestRunner(self)

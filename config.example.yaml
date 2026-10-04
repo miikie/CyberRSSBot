@@ -219,6 +219,8 @@ signals:
     # The weekly ranking is posted on the first evening on or after this weekday (0 = Monday).
     weekly_weekday: 0
     weekly_top: 10
+  # Weekly evidence report in #signals: every event type's CAR[0,+5] with Benjamini-Hochberg control at q = 0.10.
+  evidence: {weekday: 6, hour_utc: 14}
   # Catalyst attribution on big-move alerts.
   attribution:
     # Events from this many hours before the alert are considered, weighted by type and halving every
@@ -234,6 +236,28 @@ signals:
                    sec.8k.8_01_cyber: 3, sec.8k.1_05_amendment: 3, guidance.reaffirm: 2, tone.shift: 2,
                    insider.open_buy: 2, insider.cluster_sell: 2, pressure.spike: 2, kev.vendor: 1,
                    vuln.vendor_critical: 1}
+
+# Simulated paper trading. No broker, no orders, no real money: trades are filled on daily open/close prices.
+paper:
+  # true = keep a live ledger and post a line in #signals for each paper entry and exit. /paper backtest works either way.
+  enabled: false
+  starting_cash: 100000
+  # Added to the price on every fill against you (buy higher, sell lower).
+  slippage_bps: 10
+  rules:
+    - id: incident-5d
+      # Trigger: an event type, optionally only above a company-match confidence.
+      when: {event: sec.8k.1_05, min_confidence: 0.9}
+      # long | short. Short borrow costs are ignored.
+      side: short
+      # next_open: the first open after the event became public (the effective session's open, or the next
+      # session's open for an event filed during the session).
+      entry: next_open
+      # Exit at the close of the Nth session, or earlier at the stop / target. If a day touches both, the stop wins.
+      exit: {sessions: 5, stop_pct: 8, target_pct: null}
+      size: {fixed_usd: 5000}
+      # Further triggers are skipped while this many positions of the rule are open.
+      max_open: 5
 
 # Reference data for entity extraction: MITRE ATT&CK groups and software, MISP galaxy threat actors, the
 # CISA KEV vendor/product list and MITRE's CWE names, plus the manual lists in `extras_dir`.
@@ -326,6 +350,8 @@ digest:
     primary: 2.0
     # The score halves every this many hours of age, measured from the end of the window. 0 = no decay.
     half_life_hours: 24
+    # Extra score for market events in the digest's Markets section, on top of the usual score.
+    event_types: {sec.8k.1_05: 4, pressure.spike: 2, move.unexplained: 1, earnings.report: 1}
 
 sources:
   - {id: cisa-kev, type: kev,  name: CISA KEV,      channel: kev,   interval: 1800}

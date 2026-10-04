@@ -49,9 +49,7 @@ def effective_session(when: datetime, calendar: MarketCalendar) -> tuple[date, s
 
 
 def date_only_session(day: date, calendar: MarketCalendar) -> tuple[date, str]:
-    if calendar.is_trading_day(day):
-        return day, "intraday"
-    return _next_trading_day(day, calendar), "closed"
+    return _next_trading_day(day, calendar), "post" if calendar.is_trading_day(day) else "closed"
 
 
 def _next_trading_day(day: date, calendar: MarketCalendar) -> date:
@@ -82,6 +80,7 @@ class EventLog:
             day = occurred_at if isinstance(occurred_at, date) else date.fromisoformat(str(occurred_at)[:10])
             session, timing = date_only_session(day, calendar)
             occurred = datetime.combine(day, OPEN, NY)
+            payload = {**(payload or {}), "date_only": True}
         else:
             occurred = occurred_at if isinstance(occurred_at, datetime) else parse_time(str(occurred_at))
             if occurred is None:
